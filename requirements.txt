@@ -1,0 +1,14 @@
+# Install this inside a RunPod PyTorch container that already has a CUDA-compatible
+# torch + torchvision pair installed. Do NOT blindly pip-install torch unless your
+# CUDA image requires it.
+ultralytics>=8.3.0
+torchmetrics[detection]>=1.4.0
+pycocotools>=2.0.7
+opencv-python-headless>=4.8.0
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+Pillow>=10.0.0
+tqdm>=4.66.0
+PyYAML>=6.0.0
