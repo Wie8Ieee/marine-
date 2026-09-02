@@ -1,0 +1,17 @@
+{
+  "id": "rawanabuakleh1/marine-canonical-seed-42-smoke",
+  "title": "Marine Canonical Seed 42 Smoke",
+  "code_file": "kaggle_smoke_seed42.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [
+    "rawanabuakleh1/marine-trash-icra19-canonical-seed42"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
