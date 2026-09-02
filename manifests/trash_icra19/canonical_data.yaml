@@ -1,0 +1,6 @@
+path: ../../tmp/sequence_safe_build/prepared_datasets/trash_icra19_clean
+train: images/train
+val: images/val
+test: images/test
+nc: 3
+names: [plastic, bio, rov]

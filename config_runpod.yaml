@@ -1,0 +1,59 @@
+trash_root: /workspace/datasets/trash-icra19
+river_root: /workspace/datasets/river-floating-trash
+out_dir: /workspace/runs/marine_sequence_safe
+
+class_names: [plastic, bio, rov]
+seed: 42
+split_seed: 42
+split_mode: sequence_70_15_15
+copy_files: false
+
+leakage:
+  deduplicate: true
+  group_by_parent: false
+  strict_sequence_regex: true
+  sequence_regex: "^(.+?)_frame[0-9]+"
+
+data_validation:
+  min_river_images: 0
+  min_river_objects: 0
+
+experiment:
+  seeds: [42]
+
+augmentation:
+  enabled: true
+  horizontal_flip: 0.50
+  brightness: 0.00
+  saturation: 0.00
+
+qualitative_analysis:
+  max_images: 20
+
+training:
+  epochs_head: 10
+  epochs_finetune: 100
+  imgsz_yolo: 640
+  imgsz_frcnn: 640
+  imgsz_ssd: 320
+  batch_yolo: 16
+  batch_frcnn: 8
+  batch_ssd: 16
+  lr_yolo: 0.01
+  lr_torch: 0.001
+  workers: 8
+  amp: true
+  resume: true
+
+thresholds:
+  confidence: 0.25
+  iou_match: 0.50
+  class_agnostic_nms_iou: 0.50
+
+run:
+  prepare_data: true
+  train_yolo: true
+  train_frcnn: true
+  train_ssd: true
+  evaluate: true
+  quick_debug: false

@@ -1,0 +1,6 @@
+path: /root/marine_data/trash_icra19_clean
+train: images/train
+val: images/val
+test: images/test
+nc: 3
+names: [plastic, bio, rov]

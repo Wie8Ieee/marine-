@@ -1,0 +1,26 @@
+{
+  "source_classes": {
+    "0": "bottle",
+    "1": "grass",
+    "2": "branch",
+    "3": "milk-box",
+    "4": "plastic-bag",
+    "5": "plastic-garbage",
+    "6": "ball",
+    "7": "leaf"
+  },
+  "target_classes": {
+    "0": "trash"
+  },
+  "mapping": {
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3": 0,
+    "4": 0,
+    "5": 0,
+    "6": 0,
+    "7": 0
+  },
+  "policy": "River is external evaluation only; exclude all conflicting duplicate-image groups; collapse ground truth and predictions to trash; use one class-agnostic framework NMS"
+}

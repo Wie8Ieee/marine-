@@ -1,0 +1,66 @@
+{
+  "dataset": "Trash-ICRA19",
+  "status": "canonical",
+  "selection_reason": "strict sequence-level, frame-balanced 70/15/15 split with seed 42",
+  "split_seed": 42,
+  "split_mode": "sequence_70_15_15_frame_balanced",
+  "sequence_regex": "^(.+?)_frame[0-9]+",
+  "classes": [
+    "plastic",
+    "bio",
+    "rov"
+  ],
+  "images": 7684,
+  "labels": 7684,
+  "objects": 11061,
+  "sequences": 175,
+  "sequence_overlap": 0,
+  "exact_duplicate_images": 0,
+  "splits": {
+    "train": {
+      "images": 5377,
+      "labels": 5377,
+      "objects": 8103,
+      "sequences": 125,
+      "plastic": 4597,
+      "bio": 1713,
+      "rov": 1793
+    },
+    "val": {
+      "images": 1154,
+      "labels": 1154,
+      "objects": 1468,
+      "sequences": 25,
+      "plastic": 1025,
+      "bio": 197,
+      "rov": 246
+    },
+    "test": {
+      "images": 1153,
+      "labels": 1153,
+      "objects": 1490,
+      "sequences": 25,
+      "plastic": 748,
+      "bio": 507,
+      "rov": 235
+    }
+  },
+  "legacy_splits": [
+    {
+      "images": {
+        "train": 5138,
+        "val": 1253,
+        "test": 1293
+      },
+      "reason": "sequence-count-balanced legacy split"
+    },
+    {
+      "images": {
+        "train": 5378,
+        "val": 1153,
+        "test": 1153
+      },
+      "reason": "image-level stratified legacy split"
+    }
+  ]
+}

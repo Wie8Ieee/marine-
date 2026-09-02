@@ -1,0 +1,6 @@
+path: /root/marine_data/river_trash_class_agnostic
+train: images/train
+val: images/test
+test: images/test
+nc: 1
+names: [trash]

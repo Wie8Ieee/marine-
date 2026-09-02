@@ -6,9 +6,49 @@ out_dir: /workspace/runs/marine_3model_comparison
 
 class_names: [plastic, bio, rov]
 seed: 42
-split_mode: stratified_70_15_15   # recommended for the paper methodology
+split_seed: 42                    # fixed split shared by every training run
+split_mode: sequence_70_15_15     # prevents adjacent frames leaking across splits
+# split_mode: stratified_70_15_15 # fallback when sequence identity is unavailable
 # split_mode: official             # use only if your dataset already has train/val/test folders
 copy_files: false                  # false = symlink, true = copy images/labels
+
+leakage:
+  deduplicate: true                # exact SHA-256 duplicate removal + CSV audit
+  group_by_parent: false
+  strict_sequence_regex: true      # fail instead of silently falling back to image-level IDs
+  sequence_regex: "^(.+?)_frame[0-9]+" # filename prefix is the sequence ID
+
+data_validation:
+  source_river_images: 2400
+  source_river_objects: 3510
+  min_river_images: 2185
+  min_river_objects: 3202
+
+experiment:
+  seeds: [42]                       # canonical first pass; add seeds only after separate approval
+
+provenance:
+  canonical_manifest: manifests/trash_icra19/canonical_split_manifest.csv
+  fingerprint_file: manifests/trash_icra19/dataset_fingerprint.json
+  dataset_sha256: 5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf
+  split_manifest_sha256: 58825c29880ba62bd73f3d0b9b8f7e0199f957f71b020a118051ed144f92234a
+  river_fingerprint_file: manifests/river/river_fingerprint.json
+  river_source_sha256: 5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1
+  river_evaluation_sha256: 5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1
+
+approval:
+  training_authorized: true
+  river_duplicate_policy: exclude_all_conflicting_groups
+  river_nms_protocol: framework_class_agnostic_once
+
+augmentation:
+  enabled: true
+  horizontal_flip: 0.50
+  brightness: 0.00                 # disabled: PIL and Ultralytics use different color mathematics
+  saturation: 0.00                 # keep the cross-model augmentation exactly comparable
+
+qualitative_analysis:
+  max_images: 20
 
 training:
   epochs_head: 10
@@ -23,16 +63,17 @@ training:
   lr_torch: 0.001
   workers: 8
   amp: true
+  resume: true                     # resume TorchVision and either YOLO stage from last.pt
 
 thresholds:
-  conf_yolo: 0.25
-  conf_torch: 0.50
+  confidence: 0.25                # identical operating point for Precision/Recall/F1
   iou_match: 0.50
+  class_agnostic_nms_iou: 0.50    # common River post-remapping NMS for all models
 
 run:
   prepare_data: true
   train_yolo: true
   train_frcnn: true
   train_ssd: true
-  evaluate: true
+  evaluate: true                   # false = train/checkpoint only, without test or cross-domain evaluation
   quick_debug: false   # true = tiny run just to test installation/pipeline

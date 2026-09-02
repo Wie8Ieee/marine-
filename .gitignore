@@ -1,0 +1,33 @@
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local datasets and prepared/extracted copies
+.data_inspection/
+datasets/
+data/
+prepared_datasets/
+extracted_marine_3model_comparison/
+tmp/
+
+# Training services, runs, checkpoints, and generated results
+.kaggle_*/
+training_results/
+runs/
+outputs/
+checkpoints/
+research_figures/
+*.pt
+*.pth
+*.ckpt
+*.log
+
+# Large transport/archive artifacts
+*.bundle
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
