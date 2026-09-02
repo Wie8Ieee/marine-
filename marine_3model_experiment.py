@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -2178,7 +2179,8 @@ def main() -> None:
             raise RuntimeError(f"Configured provenance.{key} does not match the canonical River fingerprint.")
     verifier = repo_root / "tools" / "verify_dataset.py"
     subprocess.run(
-        [sys.executable, str(verifier), "--manifest", str(manifest_path)],
+        [sys.executable, str(verifier), "--manifest", str(manifest_path),
+         "--data-root", str(Path(cfg["trash_root"]).expanduser().resolve())],
         cwd=repo_root, check=True,
     )
     approval = cfg.get("approval", {})
@@ -2193,13 +2195,18 @@ def main() -> None:
         raise RuntimeError("Training approval gate is closed: " + "; ".join(gate_errors))
     if not args.check_sequences_only and list(cfg.get("experiment", {}).get("seeds", [])) != [42]:
         raise RuntimeError("The initial canonical run must use experiment.seeds: [42].")
+    run_cfg = cfg.get("run", {})
+    training_requested = any(bool(run_cfg.get(key, False)) for key in ("train_yolo", "train_frcnn", "train_ssd"))
+    out_dir = Path(cfg["out_dir"]).expanduser().resolve()
+    if training_requested and not bool(cfg.get("training", {}).get("resume", False)):
+        if out_dir.exists() and any(out_dir.iterdir()):
+            raise RuntimeError(f"Clean canonical output directory is not empty: {out_dir}")
     if args.preflight_only:
         if not torch.cuda.is_available():
             raise RuntimeError("Canonical training requires a CUDA GPU; this environment is CPU-only.")
-        print("Canonical training preflight passed; no training was started.")
+        print(f"Canonical training preflight passed for new output directory {out_dir}; no training was started.")
         return
 
-    out_dir = Path(cfg["out_dir"]).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.check_sequences_only:
         trash_root = Path(cfg["trash_root"]).expanduser().resolve()
@@ -2216,8 +2223,6 @@ def main() -> None:
     write_yaml(out_dir / "used_config.yaml", cfg)
     set_seed(int(cfg.get("seed", 42)))
     device = get_device()
-    run_cfg = cfg.get("run", {})
-    training_requested = any(bool(run_cfg.get(key, False)) for key in ("train_yolo", "train_frcnn", "train_ssd"))
     if training_requested and device.type != "cuda" and not bool(run_cfg.get("quick_debug", False)):
         raise RuntimeError("Canonical training requires a CUDA GPU; refusing an accidental CPU training run.")
     print(f"[{now()}] Device: {device}")
@@ -2229,9 +2234,17 @@ def main() -> None:
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
         "python_version": sys.version,
+        "git_commit": subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip(),
+        "torchvision_version": importlib.metadata.version("torchvision"),
+        "ultralytics_version": importlib.metadata.version("ultralytics"),
     }
     with (out_dir / "system_details.json").open("w", encoding="utf-8") as stream:
         json.dump(system_details, stream, indent=2)
+    with (out_dir / "python_environment.txt").open("w", encoding="utf-8") as stream:
+        subprocess.run([sys.executable, "-m", "pip", "freeze"], check=True, stdout=stream, text=True)
     experiment_protocol = {
         "confidence_threshold": confidence_threshold(cfg),
         "iou_match_threshold": float(cfg.get("thresholds", {}).get("iou_match", 0.5)),

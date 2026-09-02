@@ -52,7 +52,7 @@ def parse_label(path: Path) -> tuple[int, Counter[str], list[str]]:
     return objects, counts, errors
 
 
-def inspect(manifest: Path) -> tuple[dict, list[dict[str, str]], list[str]]:
+def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[dict[str, str]], list[str]]:
     manifest = manifest.resolve()
     rows = list(csv.DictReader(manifest.open(encoding="utf-8", newline="")))
     errors: list[str] = []
@@ -69,8 +69,14 @@ def inspect(manifest: Path) -> tuple[dict, list[dict[str, str]], list[str]]:
     for row in sorted(rows, key=lambda item: item["image_path"]):
         image_rel = Path(row["image_path"]).as_posix()
         label_rel = Path(row["label_path"]).as_posix()
-        image = REPO_ROOT / image_rel
-        label = REPO_ROOT / label_rel
+        if data_root is None:
+            image = REPO_ROOT / image_rel
+            label = REPO_ROOT / label_rel
+        else:
+            image_parts = Path(image_rel).parts
+            label_parts = Path(label_rel).parts
+            image = data_root / Path(*image_parts[image_parts.index("images"):])
+            label = data_root / Path(*label_parts[label_parts.index("labels"):])
         split = row["split"]
         sequence = row["sequence_id"]
         if image_rel in seen_images:
@@ -176,10 +182,13 @@ def write_baseline(manifest: Path, fingerprint: dict, rows: list[dict[str, str]]
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--data-root", type=Path, default=None,
+                        help="Relocated dataset root containing images/ and labels/")
     parser.add_argument("--write-baseline", action="store_true")
     args = parser.parse_args()
     manifest = args.manifest.resolve()
-    fingerprint, rows, errors = inspect(manifest)
+    data_root = args.data_root.expanduser().resolve() if args.data_root else None
+    fingerprint, rows, errors = inspect(manifest, data_root=data_root)
     if errors:
         print("Integrity errors:", file=sys.stderr)
         print("\n".join(errors), file=sys.stderr)

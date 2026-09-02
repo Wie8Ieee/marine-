@@ -97,6 +97,33 @@ Exact-image groups with conflicting labels are excluded in full; the audit is wr
 
 ## How to run
 
+### Official clean seed-42 launch
+
+The official training phase uses four immutable configs:
+
+- `config_runpod_smoke.yaml` — short pipeline check, explicitly excluded from comparison.
+- `config_runpod_yolo_seed42.yaml`
+- `config_runpod_frcnn_seed42.yaml`
+- `config_runpod_ssd_seed42.yaml`
+
+All official configs set `resume: false`, `evaluate: false`, and `experiment.seeds: [42]`.
+They write to separate directories under `/workspace/persistent`. Mount persistent storage
+there and upload the relocated canonical Trash dataset to
+`/workspace/datasets/trash-icra19` with `images/` and `labels/` beneath it.
+
+After cloning `main`, run:
+
+```bash
+export MARINE_PERSISTENCE_CONFIRMED=YES
+bash runpod_seed42_launch.sh
+```
+
+The launcher verifies that local `HEAD` equals `origin/main`, that audited commit
+`70d02255` is an ancestor, records GPU/CUDA/PyTorch/TorchVision/Ultralytics and the full
+Python environment, verifies the relocated dataset fingerprint, runs the smoke check
+without Test/River evaluation, and then starts the three clean trainings sequentially.
+It stops on the first failed prerequisite or training command.
+
 Copy `config_example.yaml` to `config.yaml`:
 
 ```bash

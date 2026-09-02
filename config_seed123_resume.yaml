@@ -47,3 +47,4 @@ run:
   train_ssd: false
   evaluate: true
   quick_debug: false
+# LEGACY CONFIG — retained for provenance only; never mix with canonical seed-42 runs.

@@ -57,3 +57,4 @@ run:
   train_ssd: true
   evaluate: true
   quick_debug: false
+# LEGACY CONFIG — do not use for canonical training; use config_runpod_*_seed42.yaml.

@@ -63,7 +63,7 @@ training:
   lr_torch: 0.001
   workers: 8
   amp: true
-  resume: true                     # resume TorchVision and either YOLO stage from last.pt
+  resume: false                    # canonical seed-42 runs start from clean initialization
 
 thresholds:
   confidence: 0.25                # identical operating point for Precision/Recall/F1
@@ -75,5 +75,5 @@ run:
   train_yolo: true
   train_frcnn: true
   train_ssd: true
-  evaluate: true                   # false = train/checkpoint only, without test or cross-domain evaluation
+  evaluate: false                  # training phase never reads official Test/River metrics
   quick_debug: false   # true = tiny run just to test installation/pipeline

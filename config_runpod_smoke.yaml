@@ -1,0 +1,57 @@
+trash_root: /workspace/datasets/trash-icra19
+river_root: null
+out_dir: /workspace/persistent/marine_smoke/seed42_pipeline_check
+class_names: [plastic, bio, rov]
+seed: 42
+split_seed: 42
+split_mode: sequence_70_15_15
+copy_files: false
+leakage:
+  deduplicate: true
+  group_by_parent: false
+  strict_sequence_regex: true
+  sequence_regex: "^(.+?)_frame[0-9]+"
+experiment:
+  seeds: [42]
+provenance:
+  canonical_manifest: manifests/trash_icra19/canonical_split_manifest.csv
+  fingerprint_file: manifests/trash_icra19/dataset_fingerprint.json
+  dataset_sha256: 5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf
+  split_manifest_sha256: 58825c29880ba62bd73f3d0b9b8f7e0199f957f71b020a118051ed144f92234a
+  river_fingerprint_file: manifests/river/river_fingerprint.json
+  river_source_sha256: 5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1
+  river_evaluation_sha256: 5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1
+approval:
+  training_authorized: true
+  river_duplicate_policy: exclude_all_conflicting_groups
+  river_nms_protocol: framework_class_agnostic_once
+augmentation:
+  enabled: true
+  horizontal_flip: 0.50
+  brightness: 0.00
+  saturation: 0.00
+training:
+  epochs_head: 1
+  epochs_finetune: 1
+  imgsz_yolo: 640
+  imgsz_frcnn: 640
+  imgsz_ssd: 320
+  batch_yolo: 2
+  batch_frcnn: 2
+  batch_ssd: 2
+  lr_yolo: 0.01
+  lr_torch: 0.001
+  workers: 2
+  amp: true
+  resume: false
+thresholds:
+  confidence: 0.25
+  iou_match: 0.50
+  class_agnostic_nms_iou: 0.50
+run:
+  prepare_data: true
+  train_yolo: true
+  train_frcnn: true
+  train_ssd: true
+  evaluate: false
+  quick_debug: true
