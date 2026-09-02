@@ -70,4 +70,11 @@ do
   config="config_runpod_${model}_seed42.yaml"
   log="$PERSISTENT_ROOT/marine_canonical/${model}_seed42_training.log"
   python marine_3model_experiment.py --config "$config" 2>&1 | tee "$log"
+  output_dir="$PERSISTENT_ROOT/marine_canonical/${model}v8s_seed42"
+  if test "$model" != "yolo"; then
+    output_dir="$PERSISTENT_ROOT/marine_canonical/${model}_seed42"
+  fi
+  cp "$PERSISTENT_ROOT/marine_environment/seed42_environment.txt" "$output_dir/environment.txt"
+  python tools/verify_training_artifacts.py \
+    --model "$model" --out-dir "$output_dir" --config "$config"
 done

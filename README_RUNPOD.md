@@ -122,7 +122,10 @@ The launcher verifies that local `HEAD` equals `origin/main`, that audited commi
 `70d02255` is an ancestor, records GPU/CUDA/PyTorch/TorchVision/Ultralytics and the full
 Python environment, verifies the relocated dataset fingerprint, runs the smoke check
 without Test/River evaluation, and then starts the three clean trainings sequentially.
-It stops on the first failed prerequisite or training command.
+After each model it verifies non-empty `best`/`last` checkpoints, loadability, complete
+resume state for TorchVision, config provenance, sizes, and SHA-256 values, writing
+`training_artifact_manifest.json`. It stops on the first failed prerequisite, training,
+or artifact-verification command.
 
 Copy `config_example.yaml` to `config.yaml`:
 
