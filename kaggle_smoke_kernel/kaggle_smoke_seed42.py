@@ -16,7 +16,10 @@ import yaml
 
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 COMMIT = "1cbcfcd6"
-INPUT_ROOT = Path("/kaggle/input/marine-trash-icra19-canonical-seed42")
+INPUT_ROOTS = (
+    Path("/kaggle/input/marine-trash-icra19-canonical-seed42"),
+    Path("/kaggle/input/marine-trash-icra19-canonical-seed-42"),
+)
 WORK_ROOT = Path("/kaggle/working/marine_canonical_smoke")
 
 
@@ -25,11 +28,18 @@ def run(*args: str) -> None:
     subprocess.run(args, check=True)
 
 
+def canonical_input_root() -> Path:
+    for candidate in INPUT_ROOTS:
+        if (candidate / "images").is_dir() and (candidate / "labels").is_dir():
+            return candidate
+    raise RuntimeError(
+        "Canonical Kaggle dataset is not mounted with images/ and labels/. "
+        f"Checked: {', '.join(map(str, INPUT_ROOTS))}"
+    )
+
+
 def main() -> None:
-    if not INPUT_ROOT.is_dir():
-        raise RuntimeError(f"Canonical Kaggle dataset is not mounted: {INPUT_ROOT}")
-    if not (INPUT_ROOT / "images").is_dir() or not (INPUT_ROOT / "labels").is_dir():
-        raise RuntimeError("Canonical Kaggle dataset must contain images/ and labels/")
+    input_root = canonical_input_root()
 
     repo = WORK_ROOT / "repository"
     run("git", "clone", "--depth", "1", REPOSITORY, str(repo))
@@ -38,7 +48,7 @@ def main() -> None:
     run(sys.executable, "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt"))
 
     config = yaml.safe_load((repo / "config_runpod_smoke.yaml").read_text(encoding="utf-8"))
-    config["trash_root"] = str(INPUT_ROOT)
+    config["trash_root"] = str(input_root)
     config["out_dir"] = str(WORK_ROOT / "output")
     config["river_root"] = None
     runtime_config = WORK_ROOT / "smoke_runtime_config.yaml"
