@@ -15,7 +15,7 @@ import yaml
 
 
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
-COMMIT = "1cbcfcd6bceaaaeb6fe47c1abf670a9508924dcb"
+REQUIRED_ANCESTOR = "70d02255"
 INPUT_ROOTS = (
     Path("/kaggle/input/marine-trash-icra19-canonical-seed42"),
     Path("/kaggle/input/marine-trash-icra19-canonical-seed-42"),
@@ -50,8 +50,9 @@ def main() -> None:
     input_root = canonical_input_root()
 
     repo = WORK_ROOT / "repository"
-    run("git", "clone", REPOSITORY, str(repo))
-    run("git", "-C", str(repo), "checkout", "--detach", COMMIT)
+    run("git", "clone", "--branch", "main", REPOSITORY, str(repo))
+    run("git", "-C", str(repo), "merge-base", "--is-ancestor", REQUIRED_ANCESTOR, "HEAD")
+    run("git", "-C", str(repo), "rev-parse", "HEAD")
     run(sys.executable, "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt"))
 
     config = yaml.safe_load((repo / "config_runpod_smoke.yaml").read_text(encoding="utf-8"))

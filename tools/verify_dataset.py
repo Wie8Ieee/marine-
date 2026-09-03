@@ -24,6 +24,12 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def normalized_text_sha256(path: Path) -> str:
+    """Hash UTF-8 text after normalizing line endings for portable manifests."""
+    content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(content).hexdigest()
+
+
 def parse_label(path: Path) -> tuple[int, Counter[str], list[str]]:
     counts: Counter[str] = Counter()
     errors: list[str] = []
@@ -136,7 +142,7 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
         "path_policy": "repository-relative POSIX paths; timestamps excluded",
         "dataset": "Trash-ICRA19",
         "dataset_sha256": aggregate.hexdigest(),
-        "split_manifest_sha256": sha256(manifest),
+        "split_manifest_sha256": normalized_text_sha256(manifest),
         "counts": dict(totals),
         "sequences": len(sequences),
         "sequence_overlap": sum(1 for error in errors if error.startswith("sequence leakage")),

@@ -4,7 +4,7 @@
   "path_policy": "repository-relative POSIX paths; timestamps excluded",
   "dataset": "Trash-ICRA19",
   "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
-  "split_manifest_sha256": "58825c29880ba62bd73f3d0b9b8f7e0199f957f71b020a118051ed144f92234a",
+  "split_manifest_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
   "counts": {
     "images": 7684,
     "labels": 7684,

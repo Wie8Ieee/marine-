@@ -5,7 +5,7 @@ No training or inference was run during this audit.
 ## Canonical identity required for future runs
 
 - Trash-ICRA19 dataset SHA-256: `5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf`
-- Canonical split manifest SHA-256: `58825c29880ba62bd73f3d0b9b8f7e0199f957f71b020a118051ed144f92234a`
+- Canonical split manifest SHA-256: `a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94`
 - Classes: `plastic`, `bio`, `rov`
 - Split seed: 42
 - Split: strict sequence-level, frame-balanced 70/15/15
