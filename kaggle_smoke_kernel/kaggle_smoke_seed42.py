@@ -15,7 +15,7 @@ import yaml
 
 
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
-COMMIT = "1cbcfcd6"
+COMMIT = "1cbcfcd6bceaaaeb6fe47c1abf670a9508924dcb"
 INPUT_ROOTS = (
     Path("/kaggle/input/marine-trash-icra19-canonical-seed42"),
     Path("/kaggle/input/marine-trash-icra19-canonical-seed-42"),
@@ -32,9 +32,17 @@ def canonical_input_root() -> Path:
     for candidate in INPUT_ROOTS:
         if (candidate / "images").is_dir() and (candidate / "labels").is_dir():
             return candidate
+    input_directory = Path("/kaggle/input")
+    candidates = [
+        candidate for candidate in input_directory.rglob("*")
+        if candidate.is_dir() and (candidate / "images").is_dir() and (candidate / "labels").is_dir()
+    ] if input_directory.is_dir() else []
+    if len(candidates) == 1:
+        return candidates[0]
+    mounted = sorted(str(candidate.relative_to(input_directory)) for candidate in input_directory.rglob("*") if candidate.is_dir()) if input_directory.is_dir() else []
     raise RuntimeError(
         "Canonical Kaggle dataset is not mounted with images/ and labels/. "
-        f"Checked: {', '.join(map(str, INPUT_ROOTS))}"
+        f"Checked: {', '.join(map(str, INPUT_ROOTS))}; mounted roots: {mounted}"
     )
 
 
@@ -42,8 +50,7 @@ def main() -> None:
     input_root = canonical_input_root()
 
     repo = WORK_ROOT / "repository"
-    run("git", "clone", "--depth", "1", REPOSITORY, str(repo))
-    run("git", "-C", str(repo), "fetch", "--depth", "1", "origin", COMMIT)
+    run("git", "clone", REPOSITORY, str(repo))
     run("git", "-C", str(repo), "checkout", "--detach", COMMIT)
     run(sys.executable, "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt"))
 
