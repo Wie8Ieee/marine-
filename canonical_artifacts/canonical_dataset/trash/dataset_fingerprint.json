@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "hash_algorithm": "SHA-256",
+  "path_policy": "repository-relative POSIX paths; timestamps excluded",
+  "dataset": "Trash-ICRA19",
+  "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
+  "split_manifest_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
+  "counts": {
+    "images": 7684,
+    "labels": 7684,
+    "objects": 11061,
+    "empty_labels": 1,
+    "plastic": 6370,
+    "bio": 2417,
+    "rov": 2274
+  },
+  "sequences": 175,
+  "sequence_overlap": 0,
+  "malformed_or_out_of_range_boxes": 0,
+  "splits": {
+    "train": {
+      "images": 5377,
+      "objects": 8103,
+      "plastic": 4597,
+      "bio": 1713,
+      "rov": 1793
+    },
+    "val": {
+      "images": 1154,
+      "objects": 1468,
+      "plastic": 1025,
+      "bio": 197,
+      "rov": 246
+    },
+    "test": {
+      "images": 1153,
+      "objects": 1490,
+      "plastic": 748,
+      "bio": 507,
+      "rov": 235
+    }
+  }
+}

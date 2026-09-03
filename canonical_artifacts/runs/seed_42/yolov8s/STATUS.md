@@ -1,0 +1,12 @@
+# YOLOv8s canonical Seed 42
+
+- Experiment ID: `yolov8s_seed42_canonical`
+- Git commit: `62a0e42ea494441cd340e0205e0eb4ee234d5c94`
+- Config: `config_runpod_yolo_seed42.yaml`
+- Dataset / split SHA-256: `5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf` / `a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94`
+- Runtime status: `RUNNING` on Kaggle; current epoch, stage, GPU, start time, and last log timestamp are `UNCERTAIN` from locally available evidence.
+- Planned epochs: 10 frozen + 100 full fine-tuning. Completed epochs: `NOT FOUND`.
+
+TRAINING RUNNING — FINAL ARTIFACTS NOT YET AVAILABLE
+
+NOT ELIGIBLE FOR TEST OR RIVER EVALUATION

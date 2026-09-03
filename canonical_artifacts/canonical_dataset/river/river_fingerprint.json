@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "dataset": "River Floating Trash",
+  "role": "external_test_only",
+  "status": "canonical_full_source_with_filtered_evaluation_subset",
+  "hash_algorithm": "SHA-256",
+  "path_policy": "archive-relative POSIX member names; timestamps excluded",
+  "archive_path": ".data_inspection/river-floating-trash-datasets.zip",
+  "archive_sha256": "ca5d8e3331d39d79d8f6e6a23ecc63252160b29a6a34c15f533865fd573f7509",
+  "dataset_sha256": "5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1",
+  "images": 2400,
+  "annotated_images": 2400,
+  "labels": 2400,
+  "objects": 3510,
+  "empty_labels": 0,
+  "classes": {
+    "grass": 201,
+    "milk-box": 255,
+    "branch": 434,
+    "plastic-bag": 411,
+    "bottle": 1691,
+    "plastic-garbage": 202,
+    "leaf": 267,
+    "ball": 49
+  },
+  "original_splits": {
+    "test": 481,
+    "train": 1680,
+    "val": 239
+  },
+  "trash_icra19_exact_image_overlap": 0,
+  "unique_image_contents": 2274,
+  "duplicate_image_groups": 89,
+  "duplicate_extra_files": 126,
+  "duplicate_groups_with_different_labels": 89,
+  "duplicate_policy": "exclude every member of each conflicting exact-image group from official evaluation",
+  "excluded_conflicting_images": 215,
+  "evaluation_images": 2185,
+  "evaluation_objects": 3202,
+  "evaluation_dataset_sha256": "5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1",
+  "malformed_or_out_of_range_boxes": 0
+}
