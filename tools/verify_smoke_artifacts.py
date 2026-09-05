@@ -36,7 +36,7 @@ def main() -> int:
     run_dir = args.out_dir / "runs" / "seed_42" / "torchvision" / "frcnn"
     best, last = run_dir / "best.pt", run_dir / "last.pt"
     manifest = {"best.pt": required(best), "last.pt": required(last), "environment": required(args.environment)}
-    checkpoint = torch.load(last, map_location="cpu", weights_only=True)
+    checkpoint = torch.load(last, map_location="cpu", weights_only=False)
     needed = {"model", "optimizer", "scheduler", "scaler", "completed_epoch", "next_epoch", "best_map", "best_epoch", "checkpoint_identity", "training_config_sha256", "dataset_sha256", "split_sha256", "git_commit", "seed", "experiment_id", "training_history"}
     missing = sorted(needed - set(checkpoint))
     if missing:

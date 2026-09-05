@@ -68,7 +68,7 @@ def main() -> int:
         for name in ("best.pt", "last.pt"):
             path = checkpoint_dir / name
             artifacts["checkpoints"][name] = require_file(path)
-            checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
             if "model" not in checkpoint or not checkpoint["model"]:
                 raise RuntimeError(f"Checkpoint has no model state: {path}")
             if name == "last.pt":
