@@ -15,7 +15,7 @@ import yaml
 
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 REQUIRED_ANCESTOR = "70d02255"
-TRAINING_COMMIT = "550e2d2bf1ba4662847ab2b2ed1a7a20e1ad0965"
+TRAINING_COMMIT = "b2d2d1bf16a37ec43669488536a9b512305bc181"
 CONFIG_NAME = "config_runpod_frcnn_seed42.yaml"
 MODEL = "frcnn"
 EXPERIMENT_ID = f"frcnn_resnet50fpn_seed42_canonical_clean_{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}"
