@@ -79,6 +79,21 @@ def write_yaml(path: Path, data: dict) -> None:
         yaml.safe_dump(data, f, sort_keys=False)
 
 
+def checkpoint_identity(cfg: dict, architecture: str) -> dict:
+    """Return immutable provenance written into every TorchVision checkpoint."""
+    provenance = cfg.get("provenance", {})
+    config_bytes = json.dumps(cfg, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return {
+        "architecture": architecture,
+        "seed": int(cfg.get("seed", 42)),
+        "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+        "dataset_sha256": provenance.get("dataset_sha256"),
+        "split_manifest_sha256": provenance.get("split_manifest_sha256"),
+        "git_commit": os.environ.get("CANONICAL_GIT_COMMIT", "unknown"),
+        "experiment_id": os.environ.get("CANONICAL_EXPERIMENT_ID", "unknown"),
+    }
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -1505,6 +1520,8 @@ def train_torchvision_detector(
     last_path = out_model_dir / "last.pt"
     history = []
     best_map = -1.0
+    best_epoch = 0
+    identity = checkpoint_identity(cfg, architecture)
     scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -1519,6 +1536,7 @@ def train_torchvision_detector(
         model.load_state_dict(resume_checkpoint["model"])
         global_epoch = int(resume_checkpoint.get("epoch", 0))
         best_map = float(resume_checkpoint.get("best_map", resume_checkpoint.get("val_metrics", {}).get("map", -1.0)))
+        best_epoch = int(resume_checkpoint.get("best_epoch", global_epoch))
         history_path = out_model_dir / "history.csv"
         if history_path.exists():
             history = pd.read_csv(history_path).to_dict("records")
@@ -1576,13 +1594,20 @@ def train_torchvision_detector(
             pd.DataFrame(history).to_csv(out_model_dir / "history.csv", index=False)
             if val_metrics["map"] > best_map:
                 best_map = val_metrics["map"]
-                torch.save({"model": model.state_dict(), "cfg": cfg, "epoch": global_epoch, "val_metrics": val_metrics}, best_path)
+                best_epoch = global_epoch
+                torch.save({
+                    "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
+                    "architecture": architecture, "stage": stage_name, "stage_epoch": epoch,
+                    "val_metrics": val_metrics, "best_map": best_map,
+                    "best_epoch": best_epoch, "checkpoint_identity": identity,
+                }, best_path)
                 print(f"Saved new best {model_name}: val mAP@0.5:0.95={best_map:.4f}")
             torch.save({
                 "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
                 "architecture": architecture,
                 "stage": stage_name, "stage_epoch": epoch, "val_metrics": val_metrics,
-                "best_map": best_map, "optimizer": optimizer.state_dict(),
+                "best_map": best_map, "best_epoch": best_epoch,
+                "checkpoint_identity": identity, "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(), "scaler": scaler.state_dict(),
             }, last_path)
 
