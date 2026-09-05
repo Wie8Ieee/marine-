@@ -1,0 +1,49 @@
+# Non-canonical Kaggle smoke only. Never use this file for reported results.
+canonical: false
+trash_root: /kaggle/input/dataset
+river_root: null
+out_dir: /kaggle/working/frcnn_exact_resume_smoke
+class_names: [plastic, bio, rov]
+seed: 42
+split_seed: 42
+split_mode: sequence_70_15_15
+copy_files: false
+leakage:
+  deduplicate: true
+  group_by_parent: false
+  strict_sequence_regex: true
+  sequence_regex: "^(.+?)_frame[0-9]+"
+provenance:
+  canonical_manifest: manifests/trash_icra19/canonical_split_manifest.csv
+  fingerprint_file: manifests/trash_icra19/dataset_fingerprint.json
+  dataset_sha256: 5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf
+  split_manifest_sha256: a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94
+augmentation:
+  enabled: true
+  horizontal_flip: 0.50
+  brightness: 0.00
+  saturation: 0.00
+training:
+  epochs_head: 10
+  epochs_finetune: 100
+  imgsz_frcnn: 640
+  batch_frcnn: 8
+  lr_torch: 0.001
+  workers: 8
+  amp: true
+  resume: false
+run:
+  prepare_data: true
+  train_yolo: false
+  train_frcnn: true
+  train_ssd: false
+  evaluate: false
+  quick_debug: true
+  resume_smoke_test: true
+resume_smoke:
+  stage1_smoke_epochs: 1
+  stage2_smoke_total_epochs: 2
+  session_a_stop_after_stage2_epoch: 1
+  session_b_resume_until_stage2_epoch: 2
+  workers: 0
+  classification: SMOKE_DEBUG_ONLY

@@ -1569,12 +1569,27 @@ def train_torchvision_detector(
 
     epochs_head = int(train_cfg.get("epochs_head", 10))
     epochs_ft = int(train_cfg.get("epochs_finetune", 100))
+    run_cfg = cfg.get("run", {})
+    resume_smoke_test = bool(run_cfg.get("resume_smoke_test", False))
+    if resume_smoke_test:
+        if bool(cfg.get("canonical", False)) or bool(cfg.get("experiment", {}).get("canonical", False)):
+            raise RuntimeError("BLOCKED — RESUME SMOKE CANNOT BE CANONICAL")
+        if not bool(run_cfg.get("quick_debug", False)) or bool(run_cfg.get("evaluate", True)):
+            raise RuntimeError("resume_smoke_test requires quick_debug=true and evaluate=false")
+        smoke_cfg = cfg.get("resume_smoke", {})
+        epochs_head = int(smoke_cfg.get("stage1_smoke_epochs", 1))
+        epochs_ft = int(smoke_cfg.get("stage2_smoke_total_epochs", 2))
+        if epochs_head < 1 or not 2 <= epochs_ft <= 3:
+            raise RuntimeError("resume_smoke_test requires stage1 >= 1 and 2 <= stage2 <= 3 epochs")
+        workers = int(smoke_cfg.get("workers", 0))
     session_control = cfg.get("session_control", {})
     stop_after_stage2_epoch = int(session_control.get("stop_after_stage2_epoch", epochs_ft))
     if not 1 <= stop_after_stage2_epoch <= epochs_ft:
         raise RuntimeError("session_control.stop_after_stage2_epoch must be within the full Stage 2 plan")
     session_id = str(session_control.get("session_id", "single_session"))
-    if bool(cfg.get("run", {}).get("quick_debug", False)):
+    if resume_smoke_test:
+        pass
+    elif bool(run_cfg.get("quick_debug", False)):
         epochs_head = min(1, epochs_head)
         epochs_ft = min(1, epochs_ft)
     lr = float(train_cfg.get("lr_torch", 0.001))
