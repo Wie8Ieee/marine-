@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import random
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,7 +9,7 @@ from PIL import Image
 
 from marine_3model_experiment import (
     YoloRecord, class_agnostic_detection_nms_once, exclude_conflicting_duplicate_groups,
-    checkpoint_identity, config_sha256, capture_rng_state, grouped_split, make_loader, sequence_id, validate_no_split_leakage,
+    checkpoint_identity, config_sha256, capture_rng_state, grouped_split, make_loader, restore_rng_state, sequence_id, validate_no_split_leakage,
     validate_resume_checkpoint,
 )
 
@@ -96,6 +97,32 @@ class SequenceSplitTests(unittest.TestCase):
         cfg = {"provenance": provenance}
         checkpoint = self.exact_checkpoint(cfg)
         validate_resume_checkpoint(checkpoint, cfg, "frcnn")
+
+    def test_epoch_seeded_sampler_order_matches_split_resume(self):
+        def order(epoch):
+            generator = torch.Generator().manual_seed(42 + epoch)
+            return torch.randperm(31, generator=generator).tolist()
+        uninterrupted = [order(epoch) for epoch in range(1, 5)]
+        session_a = [order(epoch) for epoch in range(1, 3)]
+        session_b = [order(epoch) for epoch in range(3, 5)]
+        self.assertEqual(uninterrupted, session_a + session_b)
+
+    def test_rng_capture_restore_replays_python_numpy_and_torch(self):
+        random.seed(42)
+        np_state = __import__("numpy")
+        np_state.random.seed(42)
+        torch.manual_seed(42)
+        state = capture_rng_state()
+        expected = (random.random(), np_state.random.rand(), torch.rand(1).item())
+        restore_rng_state(state)
+        actual = (random.random(), np_state.random.rand(), torch.rand(1).item())
+        self.assertEqual(expected, actual)
+
+    def test_training_config_hash_ignores_session_control(self):
+        base = {"seed": 42, "training": {"resume": False}, "run": {"quick_debug": False}, "provenance": {}}
+        first = {**base, "session_control": {"stop_after_stage2_epoch": 60, "session_id": "session_a_clean"}}
+        second = {**base, "training": {"resume": True}, "session_control": {"stop_after_stage2_epoch": 100, "session_id": "session_b_resume"}}
+        self.assertEqual(config_sha256(first), config_sha256(second))
 
     def test_river_conflicting_duplicate_group_is_fully_excluded(self):
         image_a = self.root / "a.png"
