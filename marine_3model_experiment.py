@@ -82,7 +82,7 @@ def write_yaml(path: Path, data: dict) -> None:
 def checkpoint_identity(cfg: dict, architecture: str) -> dict:
     """Return immutable provenance written into every TorchVision checkpoint."""
     provenance = cfg.get("provenance", {})
-    config_bytes = json.dumps(cfg, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    config_bytes = canonical_training_config_bytes(cfg)
     return {
         "architecture": architecture,
         "seed": int(cfg.get("seed", 42)),
@@ -92,6 +92,51 @@ def checkpoint_identity(cfg: dict, architecture: str) -> dict:
         "git_commit": os.environ.get("CANONICAL_GIT_COMMIT", "unknown"),
         "experiment_id": os.environ.get("CANONICAL_EXPERIMENT_ID", "unknown"),
     }
+
+
+def canonical_training_config_bytes(cfg: dict) -> bytes:
+    """Hash scientific settings while excluding per-session operational controls."""
+    stable = json.loads(json.dumps(cfg, sort_keys=True, default=str))
+    for key in ("trash_root", "river_root", "out_dir"):
+        stable.pop(key, None)
+    stable.get("training", {}).pop("resume", None)
+    stable.get("run", {}).pop("quick_debug", None)
+    stable.pop("session_control", None)
+    return json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def config_sha256(cfg: dict) -> str:
+    return hashlib.sha256(canonical_training_config_bytes(cfg)).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def session_control_sha256(cfg: dict) -> str:
+    control = cfg.get("session_control", {})
+    return hashlib.sha256(json.dumps(control, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def capture_rng_state() -> dict:
+    return {
+        "python_random_state": random.getstate(),
+        "numpy_random_state": np.random.get_state(),
+        "torch_cpu_rng_state": torch.get_rng_state(),
+        "torch_cuda_rng_states": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+    }
+
+
+def restore_rng_state(state: dict) -> None:
+    random.setstate(state["python_random_state"])
+    np.random.set_state(state["numpy_random_state"])
+    torch.set_rng_state(state["torch_cpu_rng_state"])
+    if torch.cuda.is_available() and state.get("torch_cuda_rng_states"):
+        torch.cuda.set_rng_state_all(state["torch_cuda_rng_states"])
 
 
 def set_seed(seed: int) -> None:
@@ -933,12 +978,13 @@ def collate_fn(batch):
 
 def make_loader(yolo_root: Path, split: str, input_size: int, num_classes: int, batch: int, workers: int,
                 shuffle: bool, class_agnostic: bool = False, augment: bool = False,
-                augmentation: Optional[dict] = None, drop_last: bool = False) -> DataLoader:
+                augmentation: Optional[dict] = None, drop_last: bool = False,
+                generator: Optional[torch.Generator] = None) -> DataLoader:
     ds = YoloDetectionDataset(yolo_root, split, input_size, num_classes, class_agnostic=class_agnostic,
                               augment=augment, augmentation=augmentation)
     return DataLoader(
         ds, batch_size=batch, shuffle=shuffle, num_workers=workers,
-        pin_memory=True, collate_fn=collate_fn, drop_last=drop_last,
+        pin_memory=True, collate_fn=collate_fn, drop_last=drop_last, generator=generator,
     )
 
 
@@ -1004,7 +1050,13 @@ def trainable_params(model: nn.Module):
 
 def validate_resume_checkpoint(checkpoint: dict, cfg: dict, architecture: str) -> None:
     """Reject an inexact or untraceable training resume before loading model state."""
-    required_state = {"model", "optimizer", "scheduler", "scaler", "epoch", "stage", "stage_epoch", "cfg"}
+    required_state = {
+        "model", "optimizer", "scheduler", "scaler", "epoch", "completed_epoch", "next_epoch",
+        "stage", "stage_epoch", "cfg", "best_map", "best_epoch", "training_history",
+        "checkpoint_identity", "training_config_sha256", "dataset_sha256", "split_sha256",
+        "git_commit", "seed", "experiment_id", "python_random_state", "numpy_random_state",
+        "torch_cpu_rng_state", "torch_cuda_rng_states", "dataloader_generator_state", "sampler_state",
+    }
     missing = sorted(required_state - set(checkpoint))
     if missing:
         raise RuntimeError(
@@ -1025,6 +1077,13 @@ def validate_resume_checkpoint(checkpoint: dict, cfg: dict, architecture: str) -
                 f"Checkpoint provenance mismatch for {key}: "
                 f"{recorded.get(key)!r} != {expected[key]!r}"
             )
+    identity = checkpoint["checkpoint_identity"]
+    expected_identity = checkpoint_identity(cfg, architecture)
+    for key in ("architecture", "seed", "config_sha256", "dataset_sha256", "split_manifest_sha256", "git_commit", "experiment_id"):
+        if identity.get(key) != expected_identity.get(key):
+            raise RuntimeError(f"Checkpoint identity mismatch for {key}: {identity.get(key)!r} != {expected_identity.get(key)!r}")
+    if checkpoint["training_config_sha256"] != config_sha256(cfg):
+        raise RuntimeError("Checkpoint training_config_sha256 does not match the current scientific config")
 
 
 # -----------------------------
@@ -1510,6 +1569,11 @@ def train_torchvision_detector(
 
     epochs_head = int(train_cfg.get("epochs_head", 10))
     epochs_ft = int(train_cfg.get("epochs_finetune", 100))
+    session_control = cfg.get("session_control", {})
+    stop_after_stage2_epoch = int(session_control.get("stop_after_stage2_epoch", epochs_ft))
+    if not 1 <= stop_after_stage2_epoch <= epochs_ft:
+        raise RuntimeError("session_control.stop_after_stage2_epoch must be within the full Stage 2 plan")
+    session_id = str(session_control.get("session_id", "single_session"))
     if bool(cfg.get("run", {}).get("quick_debug", False)):
         epochs_head = min(1, epochs_head)
         epochs_ft = min(1, epochs_ft)
@@ -1522,6 +1586,8 @@ def train_torchvision_detector(
     best_map = -1.0
     best_epoch = 0
     identity = checkpoint_identity(cfg, architecture)
+    training_config_digest = config_sha256(cfg)
+    session_control_digest = session_control_sha256(cfg)
     scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -1530,16 +1596,23 @@ def train_torchvision_detector(
     stages = [("head", epochs_head), ("all", epochs_ft)]
     global_epoch = 0
     resume_checkpoint = None
-    if bool(train_cfg.get("resume", True)) and last_path.exists():
-        resume_checkpoint = torch.load(last_path, map_location=device, weights_only=True)
+    resume_source = Path(session_control["resume_checkpoint"]).expanduser() if session_control.get("resume_checkpoint") else last_path
+    if bool(train_cfg.get("resume", True)) and not resume_source.exists():
+        raise RuntimeError(f"Resume was requested but the checkpoint does not exist: {resume_source}")
+    if bool(train_cfg.get("resume", True)) and resume_source.exists():
+        resume_checkpoint = torch.load(resume_source, map_location=device, weights_only=True)
         validate_resume_checkpoint(resume_checkpoint, cfg, architecture)
+        expected_sha = session_control.get("resume_checkpoint_sha256")
+        if expected_sha and sha256_file(resume_source) != expected_sha:
+            raise RuntimeError("Resume checkpoint SHA-256 does not match session_control.resume_checkpoint_sha256")
         model.load_state_dict(resume_checkpoint["model"])
         global_epoch = int(resume_checkpoint.get("epoch", 0))
         best_map = float(resume_checkpoint.get("best_map", resume_checkpoint.get("val_metrics", {}).get("map", -1.0)))
         best_epoch = int(resume_checkpoint.get("best_epoch", global_epoch))
-        history_path = out_model_dir / "history.csv"
-        if history_path.exists():
-            history = pd.read_csv(history_path).to_dict("records")
+        history = list(resume_checkpoint["training_history"])
+        if history and int(history[-1]["epoch"]) != global_epoch:
+            raise RuntimeError("Resume checkpoint history does not end at completed_epoch")
+        restore_rng_state(resume_checkpoint)
         if not best_path.exists():
             warnings.warn("best.pt is missing; using the resumed last.pt as the initial best checkpoint.")
             best_map = float(resume_checkpoint.get("val_metrics", {}).get("map", best_map))
@@ -1547,7 +1620,7 @@ def train_torchvision_detector(
                 "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
                 "val_metrics": resume_checkpoint.get("val_metrics", {}),
             }, best_path)
-        print(f"Resuming {model_name} after completed epoch {global_epoch} from {last_path}")
+        print(f"Resuming {model_name} after completed epoch {global_epoch} from {resume_source}")
 
     completed_before_stage = 0
     for stage_name, epochs in stages:
@@ -1565,10 +1638,17 @@ def train_torchvision_detector(
             resume_checkpoint = None
         for epoch in range(completed_in_stage + 1, epochs + 1):
             global_epoch += 1
+            epoch_generator = torch.Generator()
+            epoch_generator.manual_seed(seed + global_epoch)
+            epoch_train_loader = make_loader(
+                data_root, "train", input_size, len(class_names), batch, workers, shuffle=True,
+                augment=bool(cfg.get("augmentation", {}).get("enabled", True)),
+                augmentation=cfg.get("augmentation", {}), drop_last=True, generator=epoch_generator,
+            )
             model.train()
             loss_sum = 0.0
             n_batches = 0
-            pbar = tqdm(train_loader, desc=f"{model_name} {stage_name} epoch {epoch}/{epochs}")
+            pbar = tqdm(epoch_train_loader, desc=f"{model_name} {stage_name} epoch {epoch}/{epochs}")
             for images, targets in pbar:
                 images = [img.to(device, non_blocking=True) for img in images]
                 targets = [{k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
@@ -1590,6 +1670,7 @@ def train_torchvision_detector(
                 desc=f"{model_name} val"
             )
             row = {"epoch": global_epoch, "stage": stage_name, "loss": loss_sum / max(n_batches, 1), **val_metrics}
+            row["lr"] = optimizer.param_groups[0]["lr"]
             history.append(row)
             pd.DataFrame(history).to_csv(out_model_dir / "history.csv", index=False)
             if val_metrics["map"] > best_map:
@@ -1600,16 +1681,40 @@ def train_torchvision_detector(
                     "architecture": architecture, "stage": stage_name, "stage_epoch": epoch,
                     "val_metrics": val_metrics, "best_map": best_map,
                     "best_epoch": best_epoch, "checkpoint_identity": identity,
+                    "training_config_sha256": training_config_digest,
                 }, best_path)
                 print(f"Saved new best {model_name}: val mAP@0.5:0.95={best_map:.4f}")
+            resume_state = capture_rng_state()
             torch.save({
                 "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
+                "completed_epoch": global_epoch, "next_epoch": global_epoch + 1,
                 "architecture": architecture,
                 "stage": stage_name, "stage_epoch": epoch, "val_metrics": val_metrics,
                 "best_map": best_map, "best_epoch": best_epoch,
                 "checkpoint_identity": identity, "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(), "scaler": scaler.state_dict(),
+                "training_history": history, "training_config_sha256": training_config_digest,
+                "session_control_sha256": session_control_digest, "session_id": session_id,
+                "seed": seed, "experiment_id": identity["experiment_id"], "git_commit": identity["git_commit"],
+                "dataset_sha256": identity["dataset_sha256"], "split_sha256": identity["split_manifest_sha256"],
+                "dataloader_generator_state": epoch_generator.get_state(),
+                "sampler_state": {"strategy": "epoch_seeded_generator", "seed": seed + global_epoch, "next_global_epoch": global_epoch + 1},
+                **resume_state,
             }, last_path)
+            if stage_name == "all" and epoch == stop_after_stage2_epoch and epoch < epochs_ft:
+                status = {
+                    "status": "SESSION_A_COMPLETE_READY_FOR_RESUME",
+                    "training_status": "TRAINING_NOT_COMPLETE",
+                    "session_id": session_id,
+                    "completed_epoch": global_epoch,
+                    "completed_stage2_epoch": epoch,
+                    "next_stage2_epoch": epoch + 1,
+                    "last_checkpoint_sha256": sha256_file(last_path),
+                    "training_config_sha256": training_config_digest,
+                    "session_control_sha256": session_control_digest,
+                }
+                (out_dir / "session_status.json").write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+                return model, {}, math.nan, math.nan
 
     if not bool(cfg.get("run", {}).get("evaluate", True)):
         return model, {}, math.nan, math.nan

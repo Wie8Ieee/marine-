@@ -8,7 +8,7 @@ from PIL import Image
 
 from marine_3model_experiment import (
     YoloRecord, class_agnostic_detection_nms_once, exclude_conflicting_duplicate_groups,
-    grouped_split, make_loader, sequence_id, validate_no_split_leakage,
+    checkpoint_identity, config_sha256, capture_rng_state, grouped_split, make_loader, sequence_id, validate_no_split_leakage,
     validate_resume_checkpoint,
 )
 
@@ -23,6 +23,24 @@ class SequenceSplitTests(unittest.TestCase):
 
     def record(self, name):
         return YoloRecord(self.root / name, None)
+
+    @staticmethod
+    def exact_checkpoint(cfg):
+        generator = torch.Generator().manual_seed(123)
+        identity = checkpoint_identity(cfg, "frcnn")
+        return {
+            "model": {}, "optimizer": {}, "scheduler": {}, "scaler": {},
+            "epoch": 87, "completed_epoch": 87, "next_epoch": 88,
+            "stage": "all", "stage_epoch": 77, "architecture": "frcnn",
+            "cfg": {"provenance": cfg["provenance"].copy()}, "best_map": 0.4, "best_epoch": 80,
+            "training_history": [{"epoch": 87}], "checkpoint_identity": identity,
+            "training_config_sha256": config_sha256(cfg), "dataset_sha256": identity["dataset_sha256"],
+            "split_sha256": identity["split_manifest_sha256"], "git_commit": identity["git_commit"],
+            "seed": identity["seed"], "experiment_id": identity["experiment_id"],
+            "dataloader_generator_state": generator.get_state(),
+            "sampler_state": {"strategy": "epoch_seeded_generator", "seed": 129, "next_global_epoch": 88},
+            **capture_rng_state(),
+        }
 
     def test_prefix_is_sequence_not_class(self):
         self.assertEqual(sequence_id(self.record("obj0309_frame0000130.jpg"), self.cfg), "obj0309")
@@ -68,22 +86,15 @@ class SequenceSplitTests(unittest.TestCase):
 
     def test_resume_requires_matching_fingerprints(self):
         cfg = {"provenance": {"dataset_sha256": "dataset-a", "split_manifest_sha256": "split-a"}}
-        checkpoint = {
-            "model": {}, "optimizer": {}, "scheduler": {}, "scaler": {},
-            "epoch": 87, "stage": "all", "stage_epoch": 77, "architecture": "frcnn",
-            "cfg": {"provenance": {"dataset_sha256": "dataset-b", "split_manifest_sha256": "split-a"}},
-        }
+        checkpoint = self.exact_checkpoint(cfg)
+        checkpoint["cfg"]["provenance"]["dataset_sha256"] = "dataset-b"
         with self.assertRaisesRegex(RuntimeError, "dataset_sha256"):
             validate_resume_checkpoint(checkpoint, cfg, "frcnn")
 
     def test_resume_accepts_exact_identity(self):
         provenance = {"dataset_sha256": "dataset-a", "split_manifest_sha256": "split-a"}
         cfg = {"provenance": provenance}
-        checkpoint = {
-            "model": {}, "optimizer": {}, "scheduler": {}, "scaler": {},
-            "epoch": 87, "stage": "all", "stage_epoch": 77, "architecture": "frcnn",
-            "cfg": {"provenance": provenance.copy()},
-        }
+        checkpoint = self.exact_checkpoint(cfg)
         validate_resume_checkpoint(checkpoint, cfg, "frcnn")
 
     def test_river_conflicting_duplicate_group_is_fully_excluded(self):
