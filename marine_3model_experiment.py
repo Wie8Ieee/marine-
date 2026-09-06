@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import hashlib
 import importlib.metadata
 import json
@@ -77,6 +78,50 @@ def write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, sort_keys=False)
+
+
+def session_status_path(cfg: dict, run_dir: Path) -> Path:
+    """Keep session-control state at the configured output root, not below a seed run."""
+    return Path(cfg.get("out_dir", run_dir)).expanduser() / "session_status.json"
+
+
+def write_session_status(path: Path, status: dict) -> None:
+    """Atomically publish a session contract for an external resume launcher."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(status, timestamp_utc=dt.datetime.now(dt.timezone.utc).isoformat())
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def validate_session_a_contract(output_root: Path, expected_next_stage2_epoch: int) -> dict:
+    """Validate disk-only Process A artifacts before a fresh Process B is allowed."""
+    prefix = "PROCESS_A_CONTRACT_FAILED — "
+    status_path = output_root / "session_status.json"
+    if not status_path.is_file():
+        raise RuntimeError(prefix + "SESSION STATUS FILE MISSING")
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(prefix + "SESSION STATUS JSON MALFORMED") from exc
+    if status.get("status") != "SESSION_A_COMPLETE_READY_FOR_RESUME":
+        raise RuntimeError(prefix + f"UNEXPECTED STATUS {status.get('status')!r}")
+    if status.get("training_complete") is not False:
+        raise RuntimeError(prefix + "TRAINING COMPLETE FLAG INVALID")
+    if int(status.get("next_stage2_epoch", -1)) != expected_next_stage2_epoch:
+        raise RuntimeError(prefix + "NEXT STAGE2 EPOCH INVALID")
+    last_path = Path(status.get("last_checkpoint", ""))
+    if not last_path.is_file() or last_path.stat().st_size == 0:
+        raise RuntimeError(prefix + "LAST CHECKPOINT MISSING OR EMPTY")
+    if sha256_file(last_path) != status.get("last_checkpoint_sha256"):
+        raise RuntimeError(prefix + "LAST CHECKPOINT SHA-256 MISMATCH")
+    try:
+        checkpoint = torch.load(last_path, map_location="cpu", weights_only=False)
+    except Exception as exc:
+        raise RuntimeError(prefix + "LAST CHECKPOINT UNLOADABLE") from exc
+    if int(checkpoint.get("next_epoch", -1)) != int(status.get("next_epoch", -1)):
+        raise RuntimeError(prefix + "NEXT EPOCH INVALID")
+    return status
 
 
 def checkpoint_identity(cfg: dict, architecture: str) -> dict:
@@ -1721,19 +1766,31 @@ def train_torchvision_detector(
             if stage_name == "all" and epoch == stop_after_stage2_epoch and epoch < epochs_ft:
                 status = {
                     "status": "SESSION_A_COMPLETE_READY_FOR_RESUME",
-                    "training_status": "TRAINING_NOT_COMPLETE",
+                    "training_complete": False,
+                    "stage": "stage2",
                     "session_id": session_id,
+                    "experiment_id": identity["experiment_id"],
                     "completed_epoch": global_epoch,
                     "completed_stage2_epoch": epoch,
                     "next_stage2_epoch": epoch + 1,
+                    "next_epoch": global_epoch + 1,
+                    "last_checkpoint": str(last_path.resolve()),
                     "last_checkpoint_sha256": sha256_file(last_path),
                     "training_config_sha256": training_config_digest,
                     "session_control_sha256": session_control_digest,
                 }
-                (out_dir / "session_status.json").write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+                write_session_status(session_status_path(cfg, out_dir), status)
                 return model, {}, math.nan, math.nan
 
     if not bool(cfg.get("run", {}).get("evaluate", True)):
+        if cfg.get("session_control"):
+            write_session_status(session_status_path(cfg, out_dir), {
+                "status": "TRAINING_COMPLETE", "training_complete": True, "stage": "stage2",
+                "session_id": session_id, "experiment_id": identity["experiment_id"],
+                "completed_epoch": global_epoch, "completed_stage2_epoch": epochs_ft,
+                "next_stage2_epoch": epochs_ft + 1, "next_epoch": global_epoch + 1,
+                "last_checkpoint": str(last_path.resolve()), "last_checkpoint_sha256": sha256_file(last_path),
+            })
         return model, {}, math.nan, math.nan
 
     ckpt = torch.load(best_path, map_location=device)
@@ -2148,7 +2205,17 @@ def run_single_seed(paths: PreparedPaths, out_dir: Path, cfg: dict, device: torc
             row["seed"] = seed
             overall_rows.append(row)
     if bool(run_cfg.get("train_frcnn", True)):
-        frcnn_model, metrics, fps, ms = train_torchvision_detector("frcnn", paths.trash_dir, out_dir, cfg, device)
+        try:
+            frcnn_model, metrics, fps, ms = train_torchvision_detector("frcnn", paths.trash_dir, out_dir, cfg, device)
+        except Exception as exc:
+            if cfg.get("session_control"):
+                write_session_status(session_status_path(cfg, out_dir), {
+                    "status": "FAILED", "training_complete": False, "stage": "unknown",
+                    "session_id": str(cfg["session_control"].get("session_id", "unknown")),
+                    "experiment_id": os.environ.get("CANONICAL_EXPERIMENT_ID", "unknown"),
+                    "error_type": type(exc).__name__, "error_message": str(exc)[:500],
+                })
+            raise
         if evaluate_enabled:
             results_by_model["Faster R-CNN"] = metrics
             row = metrics_row("Faster R-CNN", "Trash-ICRA19 test", metrics, fps, ms)
