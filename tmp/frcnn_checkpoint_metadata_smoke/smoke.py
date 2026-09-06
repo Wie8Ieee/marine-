@@ -17,7 +17,8 @@ import yaml
 COMMIT = "PINNED_COMMIT_REPLACED_BEFORE_LAUNCH"
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 WORKING = Path("/kaggle/working")
-ROOT = WORKING / "frcnn_smoke_v7_export"
+ROOT = WORKING / "frcnn_smoke_v8_export"
+RUNTIME = WORKING / "frcnn_smoke_v8_runtime"
 LAST_STAGE = "NOT_STARTED"
 RESULT = {"smoke_status": "FAIL", "last_verified_stage": LAST_STAGE, "failed_stage": None, "exception_type": None, "message": None, "return_code": None}
 
@@ -45,9 +46,15 @@ def sha256(path: Path) -> str:
 def safe_command(command: list[str]) -> list[str]:
     return ["<redacted>" if any(key in part.lower() for key in ("token", "password", "api_key", "secret")) else part for part in command]
 
-def execute(stage: str, command: list[str], cwd: Path, env: dict[str, str]) -> None:
+class ProcessFailure(RuntimeError):
+    def __init__(self, stage: str, return_code: int) -> None:
+        super().__init__(f"{stage} subprocess returned {return_code}")
+        self.stage, self.return_code = stage, return_code
+
+
+def execute(stage: str, command: list[str], cwd: Path, env: dict[str, str], directory: Path | None = None) -> None:
     """Stream every subprocess log to disk and raise only to main's safe handler."""
-    directory = ROOT / stage; directory.mkdir(parents=True, exist_ok=True)
+    directory = directory or ROOT / stage; directory.mkdir(parents=True, exist_ok=True)
     marker(f"{stage.upper()}_STARTED"); atomic_json(directory / "command.json", {"command": safe_command(command)})
     started = dt.datetime.now(dt.timezone.utc).isoformat()
     with (directory / "stdout.log").open("w", encoding="utf-8") as stdout, (directory / "stderr.log").open("w", encoding="utf-8") as stderr:
@@ -57,7 +64,7 @@ def execute(stage: str, command: list[str], cwd: Path, env: dict[str, str]) -> N
     atomic_json(directory / "execution.json", execution)
     if code:
         atomic_json(directory / "failure.json", {**execution, "message": f"subprocess returned {code}"})
-        raise RuntimeError(f"{stage} subprocess returned {code}")
+        raise ProcessFailure(stage, code)
     marker(f"{stage.upper()}_COMPLETED", return_code=code)
 
 def data_root() -> Path:
@@ -85,12 +92,14 @@ def checkpoint_summary(path: Path) -> dict:
     return {"epochs": [int(row["epoch"]) for row in ckpt["training_history"]], "lrs": [float(row["lr"]) for row in ckpt["training_history"]], "best_epoch": int(ckpt["best_epoch"]), "best_map": float(ckpt["best_map"]), "next_epoch": int(ckpt["next_epoch"]), "optimizer": ckpt["optimizer"]["param_groups"], "scheduler": {key: ckpt["scheduler"].get(key) for key in ("T_max", "last_epoch", "_step_count", "_last_lr")}, "sha256": sha256(path)}
 
 def fail(stage: str, exc: BaseException, return_code: int | None = None) -> None:
+    if isinstance(exc, ProcessFailure):
+        stage, return_code = exc.stage, exc.return_code
     RESULT.update({"smoke_status": "FAIL", "last_verified_stage": LAST_STAGE, "failed_stage": stage, "exception_type": type(exc).__name__, "message": str(exc), "return_code": return_code})
     atomic_json(ROOT / "unhandled_exception.json", {"stage": stage, "error_type": type(exc).__name__, "message": str(exc), "traceback": traceback.format_exc()}); marker("SMOKE_FAIL", failed_stage=stage, error_type=type(exc).__name__)
 
 def bundle() -> None:
     try:
-        with zipfile.ZipFile(WORKING / "frcnn_smoke_v7_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(WORKING / "frcnn_smoke_v8_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for item in ROOT.rglob("*"):
                 if item.is_file(): archive.write(item, item.relative_to(WORKING))
         marker("BUNDLE_CREATED")
@@ -99,18 +108,19 @@ def bundle() -> None:
 
 def main() -> bool:
     global LAST_STAGE
-    for directory in (ROOT, ROOT / "reference", ROOT / "process_a", ROOT / "process_b", ROOT / "configs", ROOT / "diagnostics"): directory.mkdir(parents=True, exist_ok=True)
-    marker("NOTEBOOK_STARTED"); marker("EXPORT_ROOT_CREATED"); repo = ROOT / "repository"
+    for directory in (ROOT, ROOT / "reference", ROOT / "process_a", ROOT / "process_b", ROOT / "configs", ROOT / "diagnostics", RUNTIME): directory.mkdir(parents=True, exist_ok=True)
+    marker("NOTEBOOK_STARTED"); marker("EXPORT_ROOT_CREATED"); repo = RUNTIME / "checkout"
     try:
         launcher_env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1")
-        execute("repository", ["git", "clone", REPOSITORY, str(repo)], ROOT, launcher_env)
-        execute("repository_fetch", ["git", "-C", str(repo), "fetch", "origin"], ROOT, launcher_env)
-        execute("repository_checkout", ["git", "-C", str(repo), "checkout", "--detach", COMMIT], ROOT, launcher_env)
+        if repo.exists(): raise RuntimeError(f"CHECKOUT_CONTRACT_FAILED — checkout already exists: {repo}")
+        execute("repository_clone", ["git", "clone", REPOSITORY, str(repo)], ROOT, launcher_env, ROOT / "diagnostics" / "repository_clone")
+        execute("repository_fetch", ["git", "-C", str(repo), "fetch", "origin"], ROOT, launcher_env, ROOT / "diagnostics" / "repository_fetch")
+        execute("repository_checkout", ["git", "-C", str(repo), "checkout", "--detach", COMMIT], ROOT, launcher_env, ROOT / "diagnostics" / "repository_checkout")
         actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
         if actual != COMMIT: raise RuntimeError("BLOCKED — WRONG GIT COMMIT")
         marker("REPOSITORY_CLONED"); marker("COMMIT_VERIFIED", commit=actual)
         execute("dependencies", [sys.executable, "-u", "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt")], repo, launcher_env)
-        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v7_{actual[:8]}"
+        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v8_{actual[:8]}"
         environment = ROOT / "environment.json"; atomic_json(environment, {"smoke": True, "classification": "SMOKE_DEBUG_ONLY", "canonical": False, "experiment_id": experiment_id, "commit": actual, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"})
         env = dict(launcher_env, CANONICAL_GIT_COMMIT=actual, CANONICAL_EXPERIMENT_ID=experiment_id)
         ref_out, resume_out = ROOT / "reference", ROOT / "process_a"

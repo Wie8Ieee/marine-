@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
+class ProcessFailure(RuntimeError):
+    def __init__(self, stage: str, return_code: int) -> None:
+        super().__init__(f"{stage} subprocess returned {return_code}")
+        self.stage, self.return_code = stage, return_code
+
+
 def atomic_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -44,6 +50,8 @@ class SmokeExport:
         self.last_stage = stage
 
     def failure(self, stage: str, exc: BaseException, return_code: int | None = None) -> None:
+        if isinstance(exc, ProcessFailure):
+            stage, return_code = exc.stage, exc.return_code
         self.marker("SMOKE_FAIL", failed_stage=stage, error_type=type(exc).__name__)
         self.result.update({"smoke_status": "FAIL", "last_verified_stage": self.last_stage,
                             "failed_stage": stage, "exception_type": type(exc).__name__,
@@ -65,7 +73,7 @@ class SmokeExport:
         atomic_json(directory / "execution.json", execution)
         if code:
             atomic_json(directory / "failure.json", {**execution, "message": f"subprocess returned {code}"})
-            raise RuntimeError(f"{stage} subprocess returned {code}")
+            raise ProcessFailure(stage, code)
         return code
 
     def finalize(self, passed: bool = False) -> None:
