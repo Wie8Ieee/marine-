@@ -13,12 +13,17 @@ from pathlib import Path
 import torch
 import yaml
 
-# Replaced with the committed Version 7 SHA immediately before the Kaggle push.
+# Replaced with the committed Version 9 SHA immediately before the Kaggle push.
 COMMIT = "PINNED_COMMIT_REPLACED_BEFORE_LAUNCH"
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 WORKING = Path("/kaggle/working")
-ROOT = WORKING / "frcnn_smoke_v8_export"
-RUNTIME = WORKING / "frcnn_smoke_v8_runtime"
+ROOT = WORKING / "frcnn_smoke_v9_export"
+RUNTIME = WORKING / "frcnn_smoke_v9_runtime"
+DIAGNOSTICS = ROOT / "diagnostics"
+CONFIGS = ROOT / "configs"
+ARTIFACTS = ROOT / "artifacts"
+REFERENCE_OUTPUT = ARTIFACTS / "reference_run"
+RESUME_OUTPUT = ARTIFACTS / "resume_run"
 LAST_STAGE = "NOT_STARTED"
 RESULT = {"smoke_status": "FAIL", "last_verified_stage": LAST_STAGE, "failed_stage": None, "exception_type": None, "message": None, "return_code": None}
 
@@ -82,7 +87,7 @@ def config_for(base: dict, out_dir: Path, resume: bool, session_id: str, stop_af
     return cfg
 
 def write_config(name: str, config: dict) -> Path:
-    path = ROOT / "configs" / f"{name}_runtime_config.yaml"
+    path = CONFIGS / f"{name}_runtime_config.yaml"
     with path.open("w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream, sort_keys=False); stream.flush(); os.fsync(stream.fileno())
     return path
@@ -99,7 +104,7 @@ def fail(stage: str, exc: BaseException, return_code: int | None = None) -> None
 
 def bundle() -> None:
     try:
-        with zipfile.ZipFile(WORKING / "frcnn_smoke_v8_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(WORKING / "frcnn_smoke_v9_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for item in ROOT.rglob("*"):
                 if item.is_file(): archive.write(item, item.relative_to(WORKING))
         marker("BUNDLE_CREATED")
@@ -108,37 +113,41 @@ def bundle() -> None:
 
 def main() -> bool:
     global LAST_STAGE
-    for directory in (ROOT, ROOT / "reference", ROOT / "process_a", ROOT / "process_b", ROOT / "configs", ROOT / "diagnostics", RUNTIME): directory.mkdir(parents=True, exist_ok=True)
+    # Only parents are created by the launcher. Training owns its clean output directories.
+    for directory in (ROOT, DIAGNOSTICS, CONFIGS, ARTIFACTS, RUNTIME): directory.mkdir(parents=True, exist_ok=True)
     marker("NOTEBOOK_STARTED"); marker("EXPORT_ROOT_CREATED"); repo = RUNTIME / "checkout"
     try:
         launcher_env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1")
         if repo.exists(): raise RuntimeError(f"CHECKOUT_CONTRACT_FAILED — checkout already exists: {repo}")
-        execute("repository_clone", ["git", "clone", REPOSITORY, str(repo)], ROOT, launcher_env, ROOT / "diagnostics" / "repository_clone")
-        execute("repository_fetch", ["git", "-C", str(repo), "fetch", "origin"], ROOT, launcher_env, ROOT / "diagnostics" / "repository_fetch")
-        execute("repository_checkout", ["git", "-C", str(repo), "checkout", "--detach", COMMIT], ROOT, launcher_env, ROOT / "diagnostics" / "repository_checkout")
+        execute("repository_clone", ["git", "clone", REPOSITORY, str(repo)], ROOT, launcher_env, DIAGNOSTICS / "repository_clone")
+        execute("repository_fetch", ["git", "-C", str(repo), "fetch", "origin"], ROOT, launcher_env, DIAGNOSTICS / "repository_fetch")
+        execute("repository_checkout", ["git", "-C", str(repo), "checkout", "--detach", COMMIT], ROOT, launcher_env, DIAGNOSTICS / "repository_checkout")
         actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
         if actual != COMMIT: raise RuntimeError("BLOCKED — WRONG GIT COMMIT")
         marker("REPOSITORY_CLONED"); marker("COMMIT_VERIFIED", commit=actual)
         execute("dependencies", [sys.executable, "-u", "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt")], repo, launcher_env)
-        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v8_{actual[:8]}"
+        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v9_{actual[:8]}"
         environment = ROOT / "environment.json"; atomic_json(environment, {"smoke": True, "classification": "SMOKE_DEBUG_ONLY", "canonical": False, "experiment_id": experiment_id, "commit": actual, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"})
         env = dict(launcher_env, CANONICAL_GIT_COMMIT=actual, CANONICAL_EXPERIMENT_ID=experiment_id)
-        ref_out, resume_out = ROOT / "reference", ROOT / "process_a"
+        ref_out, resume_out = REFERENCE_OUTPUT, RESUME_OUTPUT
+        if ref_out.exists(): raise RuntimeError(f"REFERENCE_OUTPUT_CONTRACT_FAILED — output already exists: {ref_out}")
+        if resume_out.exists(): raise RuntimeError(f"PROCESS_A_OUTPUT_CONTRACT_FAILED — output already exists: {resume_out}")
         reference = write_config("reference", config_for(base, ref_out, False, "reference_uninterrupted", 2)); process_a = write_config("process_a", config_for(base, resume_out, False, "session_a_clean", 1)); marker("CONFIGS_CREATED")
-        execute("reference", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(reference)], repo, env); marker("REFERENCE_COMPLETED")
-        execute("process_a", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_a)], repo, env); marker("PROCESS_A_COMPLETED")
+        execute("reference", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(reference)], repo, env, DIAGNOSTICS / "reference"); marker("REFERENCE_COMPLETED")
+        execute("process_a", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_a)], repo, env, DIAGNOSTICS / "process_a"); marker("PROCESS_A_COMPLETED")
         marker("PROCESS_A_CONTRACT_STARTED"); sys.path.insert(0, str(repo)); from marine_3model_experiment import validate_session_a_contract
         status = validate_session_a_contract(resume_out, expected_next_stage2_epoch=2); last = Path(status["last_checkpoint"])
         if not last.is_file() or not last.stat().st_size or sha256(last) != status["last_checkpoint_sha256"]: raise RuntimeError("PROCESS_A_CONTRACT_FAIL")
         checkpoint_summary(last); marker("PROCESS_A_CONTRACT_PASSED")
-        process_b = write_config("process_b", config_for(base, ROOT / "process_b", True, "session_b_resume", 2, last)); marker("PROCESS_B_CONFIG_CREATED")
-        execute("process_b", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_b)], repo, env); marker("PROCESS_B_COMPLETED")
-        marker("COMPARISON_STARTED"); reference_ckpt = checkpoint_summary(ref_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt"); resumed_ckpt = checkpoint_summary(ROOT / "process_b" / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt")
+        if not resume_out.exists(): raise RuntimeError("PROCESS_B_OUTPUT_CONTRACT_FAILED — Process A output missing")
+        process_b = write_config("process_b", config_for(base, resume_out, True, "session_b_resume", 2, last)); marker("PROCESS_B_CONFIG_CREATED")
+        execute("process_b", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_b)], repo, env, DIAGNOSTICS / "process_b"); marker("PROCESS_B_COMPLETED")
+        marker("COMPARISON_STARTED"); reference_ckpt = checkpoint_summary(ref_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt"); resumed_ckpt = checkpoint_summary(resume_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt")
         checks = {"history": resumed_ckpt["epochs"] == [1, 2, 3], "lr": resumed_ckpt["lrs"] == reference_ckpt["lrs"], "optimizer": resumed_ckpt["optimizer"] == reference_ckpt["optimizer"], "scheduler": resumed_ckpt["scheduler"] == reference_ckpt["scheduler"], "best_epoch": resumed_ckpt["best_epoch"] == reference_ckpt["best_epoch"], "next_epoch": resumed_ckpt["next_epoch"] == 4}
-        atomic_json(ROOT / "diagnostics" / "resume_smoke_comparison.json", {"checks": checks, "reference": reference_ckpt, "resumed": resumed_ckpt})
+        atomic_json(DIAGNOSTICS / "resume_smoke_comparison.json", {"checks": checks, "reference": reference_ckpt, "resumed": resumed_ckpt})
         if not all(checks.values()): raise RuntimeError("Exact-resume structural comparison failed")
         marker("COMPARISON_PASSED"); marker("VERIFIER_STARTED")
-        execute("verifier", [sys.executable, "-u", str(repo / "tools/verify_smoke_artifacts.py"), "--out-dir", str(ROOT / "process_b"), "--config", str(process_b), "--environment", str(environment)], repo, env)
+        execute("verifier", [sys.executable, "-u", str(repo / "tools/verify_smoke_artifacts.py"), "--out-dir", str(resume_out), "--config", str(process_b), "--environment", str(environment)], repo, env, DIAGNOSTICS / "verifier")
         atomic_json(ROOT / "smoke_artifact_manifest.json", {"classification": "SMOKE_DEBUG_ONLY", "canonical": False, "commit": actual, "experiment_id": experiment_id}); marker("VERIFIER_PASSED")
         RESULT.update({"smoke_status": "PASS", "last_verified_stage": "VERIFIER_PASSED", "failed_stage": None, "exception_type": None, "message": None, "return_code": None}); marker("SMOKE_PASS"); return True
     except Exception as exc:
