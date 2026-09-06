@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import atexit
 import hashlib
 import json
 import os
@@ -15,10 +16,34 @@ import yaml
 COMMIT = "4078fc18c1a20798cd7a6a8a7a7d533411568e50"
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 ROOT = Path("/kaggle/working") / f"frcnn_exact_resume_smoke_{COMMIT[:8]}_{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}"
+DIAGNOSTICS = Path("/kaggle/working/smoke_diagnostics") / ROOT.name
+
+
+def marker(stage: str, state: str, **details: object) -> None:
+    """Append a flushed stage marker before/after every launcher boundary."""
+    DIAGNOSTICS.mkdir(parents=True, exist_ok=True)
+    payload = {"stage": stage, "state": state, "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(), **details}
+    with (DIAGNOSTICS / "stage_markers.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, default=str) + "\n")
+        stream.flush(); os.fsync(stream.fileno())
+
+
+def unhandled(exc_type, exc, tb):
+    DIAGNOSTICS.mkdir(parents=True, exist_ok=True)
+    (DIAGNOSTICS / "unhandled_exception.json").write_text(json.dumps({"error_type": exc_type.__name__, "error_message": str(exc)}, indent=2) + "\n", encoding="utf-8")
+    marker("launcher", "UNHANDLED_EXCEPTION")
+    sys.__excepthook__(exc_type, exc, tb)
+
+
+sys.excepthook = unhandled
 
 
 def run(*args: str, **kwargs) -> None:
-    subprocess.run(args, check=True, **kwargs)
+    marker("launcher_command", "START", command=list(args))
+    with (DIAGNOSTICS / "launcher_stdout.log").open("a", encoding="utf-8") as stdout, (DIAGNOSTICS / "launcher_stderr.log").open("a", encoding="utf-8") as stderr:
+        completed = subprocess.run(args, check=False, stdout=stdout, stderr=stderr, text=True, **kwargs)
+    marker("launcher_command", "END", return_code=completed.returncode)
+    completed.check_returncode()
 
 
 def sha256(path: Path) -> str:
@@ -62,7 +87,7 @@ def execute(repo: Path, config: Path, env: dict[str, str], name: str, diagnostic
         return
     sys.path.insert(0, str(repo / "tools"))
     from smoke_process_diagnostics import run_logged_process, write_stage_marker
-    mirror_root = ROOT / "diagnostics"
+    mirror_root = DIAGNOSTICS
     write_stage_marker(mirror_root, "process_b", "STARTING", command=command)
     try:
         run_logged_process(command, cwd=repo, env=env, output_root=diagnostics_root, mirror_root=mirror_root, label="process_b")
@@ -79,7 +104,9 @@ def summary(path: Path) -> dict:
 
 
 ROOT.mkdir(parents=True, exist_ok=False)
+marker("launcher", "START")
 repo = ROOT / "repository"
+marker("reference", "START")
 run("git", "clone", REPOSITORY, str(repo))
 run("git", "-C", str(repo), "fetch", "origin")
 run("git", "-C", str(repo), "checkout", "--detach", COMMIT)
@@ -99,17 +126,24 @@ ref_out, resume_out = ROOT / "reference_output", ROOT / "resume_output"
 reference = write_config("reference", config_for(base, ref_out, False, "reference_uninterrupted", 2))
 process_a = write_config("process_a", config_for(base, resume_out, False, "session_a_clean", 1))
 execute(repo, reference, env, "REFERENCE")
+marker("reference", "END")
+marker("process_a", "START")
 execute(repo, process_a, env, "PROCESS_A")
+marker("process_a", "END")
 print("PROCESS_A_SUBPROCESS_EXITED", flush=True)
 sys.path.insert(0, str(repo))
 from marine_3model_experiment import validate_session_a_contract
 status_a = validate_session_a_contract(resume_out, expected_next_stage2_epoch=2)
+marker("process_a_contract", "PASS")
 last_a = Path(status_a["last_checkpoint"])
 print("PROCESS_A_ARTIFACTS_ACCEPTED", flush=True)
 print("READY_TO_START_PROCESS_B", flush=True)
 process_b = write_config("process_b", config_for(base, resume_out, True, "session_b_resume", 2, last_a))
+marker("process_b_configuration", "READY")
 execute(repo, process_b, env, "PROCESS_B", diagnostics_root=resume_out)
+marker("process_b", "END")
 
+marker("reference_comparison", "START")
 ref = summary(ref_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt")
 resumed = summary(resume_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt")
 checks = {"history_continuity": resumed["epochs"] == [1, 2, 3], "no_missing_or_duplicate_epochs": resumed["epochs"] == [1, 2, 3], "dataloader_epoch_seed_continuity": [42 + e for e in resumed["epochs"]] == [43, 44, 45], "learning_rate_continuity": resumed["lrs"] == ref["lrs"], "optimizer_progression": resumed["optimizer_groups"] == ref["optimizer_groups"], "scheduler_progression": resumed["scheduler"] == ref["scheduler"], "best_epoch_matches_reference": resumed["best_epoch"] == ref["best_epoch"], "best_metric_matches_reference": resumed["best_map"] == ref["best_map"], "next_epoch_correct": resumed["next_epoch"] == 4}
@@ -117,5 +151,8 @@ comparison = {"classification": "SMOKE_DEBUG_ONLY", "canonical": False, "referen
 (resume_out / "resume_smoke_comparison.json").write_text(json.dumps(comparison, indent=2, default=str) + "\n", encoding="utf-8")
 if comparison["status"] != "RESUME_SMOKE_COMPARISON_PASS":
     raise RuntimeError("Exact-resume structural comparison failed")
+marker("reference_comparison", "PASS")
+marker("smoke_verifier", "START")
 run(sys.executable, str(repo / "tools/verify_smoke_artifacts.py"), "--out-dir", str(resume_out), "--config", str(process_b), "--environment", str(environment), cwd=repo)
+marker("smoke_verifier", "PASS")
 (ROOT / "SMOKE_ONLY.json").write_text(json.dumps({"classification": "SMOKE_DEBUG_ONLY", "canonical": False, "research_eligibility": "NOT_ELIGIBLE_FOR_RESEARCH_RESULTS", "commit": actual, "experiment_id": experiment_id}, indent=2) + "\n", encoding="utf-8")
