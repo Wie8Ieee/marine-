@@ -1,4 +1,4 @@
-"""Version 11: non-canonical Faster smoke with verified numerical comparison."""
+"""Version 12: one non-canonical probe for Faster's first numerical divergence."""
 from __future__ import annotations
 import datetime as dt
 import hashlib
@@ -13,16 +13,17 @@ from pathlib import Path
 import torch
 import yaml
 
-# Replaced with the committed Version 11 SHA when packaging for Kaggle.
+# Replaced with the committed Version 12 SHA when packaging for Kaggle.
 COMMIT = "PINNED_COMMIT_REPLACED_BEFORE_LAUNCH"
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 WORKING = Path("/kaggle/working")
-ROOT = WORKING / "frcnn_smoke_v11_export"
-RUNTIME = WORKING / "frcnn_smoke_v11_runtime"
+ROOT = WORKING / "frcnn_smoke_v12_diagnostic_export"
+RUNTIME = WORKING / "frcnn_smoke_v12_diagnostic_runtime"
 DIAGNOSTICS = ROOT / "diagnostics"
 CONFIGS = ROOT / "configs"
 ARTIFACTS = ROOT / "artifacts"
-REFERENCE_OUTPUT = ARTIFACTS / "reference_run"
+REFERENCE_ONE_OUTPUT = ARTIFACTS / "reference_one"
+REFERENCE_TWO_OUTPUT = ARTIFACTS / "reference_two"
 RESUME_OUTPUT = ARTIFACTS / "resume_run"
 LAST_STAGE = "NOT_STARTED"
 RESULT = {"smoke_status": "FAIL", "last_verified_stage": LAST_STAGE, "failed_stage": None, "exception_type": None, "message": None, "return_code": None}
@@ -104,7 +105,7 @@ def fail(stage: str, exc: BaseException, return_code: int | None = None) -> None
 
 def bundle() -> None:
     try:
-        with zipfile.ZipFile(WORKING / "frcnn_smoke_v11_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(WORKING / "frcnn_smoke_v12_diagnostic_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for item in ROOT.rglob("*"):
                 if item.is_file(): archive.write(item, item.relative_to(WORKING))
         marker("BUNDLE_CREATED")
@@ -126,37 +127,43 @@ def main() -> bool:
         if actual != COMMIT: raise RuntimeError("BLOCKED — WRONG GIT COMMIT")
         marker("REPOSITORY_CLONED"); marker("COMMIT_VERIFIED", commit=actual)
         execute("dependencies", [sys.executable, "-u", "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt")], repo, launcher_env)
-        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v11_{actual[:8]}"
-        environment = ROOT / "environment.json"; atomic_json(environment, {"smoke": True, "classification": "SMOKE_DEBUG_ONLY", "canonical": False, "experiment_id": experiment_id, "commit": actual, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"})
+        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_divergence_diagnostic_v12_{actual[:8]}"
+        environment = ROOT / "environment.json"; atomic_json(environment, {"smoke": True, "classification": "SMOKE_DEBUG_ONLY", "canonical": False, "diagnostic_only": True, "experiment_id": experiment_id, "commit": actual, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"})
         env = dict(launcher_env, CANONICAL_GIT_COMMIT=actual, CANONICAL_EXPERIMENT_ID=experiment_id)
-        ref_out, resume_out = REFERENCE_OUTPUT, RESUME_OUTPUT
-        if ref_out.exists(): raise RuntimeError(f"REFERENCE_OUTPUT_CONTRACT_FAILED — output already exists: {ref_out}")
+        ref_one, ref_two, resume_out = REFERENCE_ONE_OUTPUT, REFERENCE_TWO_OUTPUT, RESUME_OUTPUT
+        for ref_out in (ref_one, ref_two):
+            if ref_out.exists(): raise RuntimeError(f"REFERENCE_OUTPUT_CONTRACT_FAILED — output already exists: {ref_out}")
         if resume_out.exists(): raise RuntimeError(f"PROCESS_A_OUTPUT_CONTRACT_FAILED — output already exists: {resume_out}")
-        reference = write_config("reference", config_for(base, ref_out, False, "reference_uninterrupted", 2)); process_a = write_config("process_a", config_for(base, resume_out, False, "session_a_clean", 1)); marker("CONFIGS_CREATED")
-        execute("reference", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(reference)], repo, env, DIAGNOSTICS / "reference"); marker("REFERENCE_COMPLETED")
-        execute("process_a", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_a)], repo, env, DIAGNOSTICS / "process_a"); marker("PROCESS_A_COMPLETED")
+        reference_one = write_config("reference_one", config_for(base, ref_one, False, "reference_one_uninterrupted", 2))
+        reference_two = write_config("reference_two", config_for(base, ref_two, False, "reference_two_uninterrupted", 2))
+        process_a = write_config("process_a", config_for(base, resume_out, False, "session_a_clean", 1)); marker("CONFIGS_CREATED")
+        env_r1 = dict(env, FRCNN_DIVERGENCE_TRACE=str(DIAGNOSTICS / "reference_one" / "training_trace.jsonl"))
+        env_r2 = dict(env, FRCNN_DIVERGENCE_TRACE=str(DIAGNOSTICS / "reference_two" / "training_trace.jsonl"))
+        env_a = dict(env, FRCNN_DIVERGENCE_TRACE=str(DIAGNOSTICS / "process_a" / "training_trace.jsonl"))
+        execute("reference_one", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(reference_one)], repo, env_r1, DIAGNOSTICS / "reference_one"); marker("REFERENCE_ONE_COMPLETED")
+        execute("reference_two", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(reference_two)], repo, env_r2, DIAGNOSTICS / "reference_two"); marker("REFERENCE_TWO_COMPLETED")
+        execute("process_a", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_a)], repo, env_a, DIAGNOSTICS / "process_a"); marker("PROCESS_A_COMPLETED")
         marker("PROCESS_A_CONTRACT_STARTED"); sys.path.insert(0, str(repo)); from marine_3model_experiment import validate_session_a_contract
         status = validate_session_a_contract(resume_out, expected_next_stage2_epoch=2); last = Path(status["last_checkpoint"])
         if not last.is_file() or not last.stat().st_size or sha256(last) != status["last_checkpoint_sha256"]: raise RuntimeError("PROCESS_A_CONTRACT_FAIL")
         checkpoint_summary(last); marker("PROCESS_A_CONTRACT_PASSED")
         if not resume_out.exists(): raise RuntimeError("PROCESS_B_OUTPUT_CONTRACT_FAILED — Process A output missing")
         process_b = write_config("process_b", config_for(base, resume_out, True, "session_b_resume", 2, last)); marker("PROCESS_B_CONFIG_CREATED")
-        execute("process_b", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_b)], repo, env, DIAGNOSTICS / "process_b"); marker("PROCESS_B_COMPLETED")
-        marker("COMPARISON_STARTED")
-        from tools.smoke_comparison_contract import (
-            build_comparison, validate_comparison, write_comparison,
-        )
-        suffix = Path("runs/seed_42/torchvision/frcnn/last.pt")
-        comparison = build_comparison(ref_out / suffix, resume_out / suffix, total_epochs=3)
-        comparison_file = write_comparison(resume_out, comparison)
-        # The verifier consumes this one canonical source. FAIL reports remain exported.
-        marker("COMPARISON_ARTIFACT_WRITTEN", path=str(comparison_file), status=comparison["status"])
-        validate_comparison(comparison)
-        marker("COMPARISON_PASSED"); marker("VERIFIER_STARTED")
-        execute("verifier", [sys.executable, "-u", str(repo / "tools/verify_smoke_artifacts.py"), "--out-dir", str(resume_out), "--reference-out-dir", str(ref_out), "--config", str(process_b), "--environment", str(environment)], repo, env, DIAGNOSTICS / "verifier")
-        shutil.copy2(resume_out / "smoke_artifact_manifest.json", ROOT / "smoke_artifact_manifest.json")
-        marker("VERIFIER_PASSED")
-        RESULT.update({"smoke_status": "PASS", "last_verified_stage": "VERIFIER_PASSED", "failed_stage": None, "exception_type": None, "message": None, "return_code": 0}); marker("SMOKE_PASS"); return True
+        env_b = dict(env, FRCNN_DIVERGENCE_TRACE=str(DIAGNOSTICS / "process_b" / "training_trace.jsonl"))
+        execute("process_b", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_b)], repo, env_b, DIAGNOSTICS / "process_b"); marker("PROCESS_B_COMPLETED")
+        marker("DIVERGENCE_CLASSIFICATION_STARTED")
+        diagnosis = ROOT / "divergence_diagnosis.json"
+        execute("classifier", [
+            sys.executable, "-u", str(repo / "tools/classify_frcnn_divergence.py"),
+            "--reference-one", str(DIAGNOSTICS / "reference_one" / "training_trace.jsonl"),
+            "--reference-two", str(DIAGNOSTICS / "reference_two" / "training_trace.jsonl"),
+            "--process-a", str(DIAGNOSTICS / "process_a" / "training_trace.jsonl"),
+            "--process-b", str(DIAGNOSTICS / "process_b" / "training_trace.jsonl"),
+            "--output", str(diagnosis),
+        ], repo, env, DIAGNOSTICS / "classifier")
+        result = json.loads(diagnosis.read_text(encoding="utf-8"))
+        marker("DIAGNOSIS_COMPLETE", classification=result["classification"], first_stage=result["first_divergent_stage"], first_epoch=result["first_divergent_epoch"])
+        RESULT.update({"smoke_status": "DIAGNOSIS_COMPLETE", "last_verified_stage": "DIAGNOSIS_COMPLETE", "failed_stage": None, "exception_type": None, "message": None, "return_code": 0}); return True
     except Exception as exc:
         fail(LAST_STAGE, exc); return False
     finally:

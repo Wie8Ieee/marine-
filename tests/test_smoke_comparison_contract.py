@@ -213,4 +213,4 @@ class LocalSmokeIntegrationTests(unittest.TestCase):
                               (diagnostics / "process_b/stdout.log").read_text())
                 self.assertEqual(json.loads((diagnostics / "verifier/execution.json").read_text())["return_code"], 0)
                 launcher.bundle()
-                self.assertTrue((work / "frcnn_smoke_v11_bundle.zip").is_file())
+                self.assertTrue((work / "frcnn_smoke_v12_diagnostic_bundle.zip").is_file())

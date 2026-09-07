@@ -1657,6 +1657,35 @@ def train_torchvision_detector(
         if epochs_head < 1 or not 2 <= epochs_ft <= 3:
             raise RuntimeError("resume_smoke_test requires stage1 >= 1 and 2 <= stage2 <= 3 epochs")
         workers = int(smoke_cfg.get("workers", 0))
+    diagnostic_trace = os.environ.get("FRCNN_DIVERGENCE_TRACE")
+    if diagnostic_trace and not resume_smoke_test:
+        raise RuntimeError("FRCNN divergence probes are allowed only in non-canonical resume smoke")
+    if diagnostic_trace:
+        from tools.frcnn_divergence_probe import (
+            append_event as diagnostic_event,
+            batch_state as diagnostic_batch_state,
+            checkpoint_state as diagnostic_checkpoint_state,
+            cuda_determinism as diagnostic_cuda_determinism,
+            gradient_sha256 as diagnostic_gradient_sha256,
+            rng_hashes as diagnostic_rng_hashes,
+            training_state as diagnostic_training_state,
+        )
+        diagnostic_event(
+            diagnostic_trace,
+            "INITIALIZED",
+            cuda=diagnostic_cuda_determinism(),
+            loader={
+                "shuffle": True,
+                "sampler": "RandomSampler",
+                "num_workers": workers,
+                "persistent_workers": False,
+                "worker_init_fn": None,
+                "epoch_generator_seed_rule": "seed + global_epoch",
+                "augmentations_in_workers": workers > 0,
+            },
+            model=diagnostic_training_state(model)["model"],
+            rng=diagnostic_rng_hashes(),
+        )
     session_control = cfg.get("session_control", {})
     stop_after_stage2_epoch = int(session_control.get("stop_after_stage2_epoch", epochs_ft))
     if not 1 <= stop_after_stage2_epoch <= epochs_ft:
@@ -1699,6 +1728,13 @@ def train_torchvision_detector(
         expected_sha = session_control.get("resume_checkpoint_sha256")
         if expected_sha and sha256_file(resume_source) != expected_sha:
             raise RuntimeError("Resume checkpoint SHA-256 does not match session_control.resume_checkpoint_sha256")
+        if diagnostic_trace:
+            diagnostic_event(
+                diagnostic_trace,
+                "CHECKPOINT_LOADED",
+                checkpoint=diagnostic_checkpoint_state(resume_checkpoint),
+                checkpoint_sha256=sha256_file(resume_source),
+            )
         model.load_state_dict(resume_checkpoint["model"])
         global_epoch = int(resume_checkpoint.get("epoch", 0))
         best_map = float(resume_checkpoint.get("best_map", resume_checkpoint.get("val_metrics", {}).get("map", -1.0)))
@@ -1707,6 +1743,13 @@ def train_torchvision_detector(
         if history and int(history[-1]["epoch"]) != global_epoch:
             raise RuntimeError("Resume checkpoint history does not end at completed_epoch")
         restore_rng_state(resume_checkpoint)
+        if diagnostic_trace:
+            diagnostic_event(
+                diagnostic_trace,
+                "MODEL_AND_RNG_RESTORED",
+                model=diagnostic_training_state(model)["model"],
+                rng=diagnostic_rng_hashes(),
+            )
         if not best_path.exists():
             warnings.warn("best.pt is missing; using the resumed last.pt as the initial best checkpoint.")
             best_map = float(resume_checkpoint.get("val_metrics", {}).get("map", best_map))
@@ -1729,6 +1772,13 @@ def train_torchvision_detector(
             optimizer.load_state_dict(resume_checkpoint["optimizer"])
             scheduler.load_state_dict(resume_checkpoint["scheduler"])
             scaler.load_state_dict(resume_checkpoint["scaler"])
+            if diagnostic_trace:
+                diagnostic_event(
+                    diagnostic_trace,
+                    "ALL_STATES_RESTORED",
+                    stage=stage_name,
+                    state=diagnostic_training_state(model, optimizer, scheduler, scaler, history=history),
+                )
             resume_checkpoint = None
         for epoch in range(completed_in_stage + 1, epochs + 1):
             global_epoch += 1
@@ -1742,8 +1792,26 @@ def train_torchvision_detector(
             model.train()
             loss_sum = 0.0
             n_batches = 0
-            pbar = tqdm(epoch_train_loader, desc=f"{model_name} {stage_name} epoch {epoch}/{epochs}")
-            for images, targets in pbar:
+            if diagnostic_trace:
+                diagnostic_event(
+                    diagnostic_trace,
+                    "BEFORE_ITERATOR",
+                    global_epoch=global_epoch,
+                    stage=stage_name,
+                    state=diagnostic_training_state(model, optimizer, scheduler, scaler, epoch_generator, history),
+                )
+            epoch_iterator = iter(epoch_train_loader)
+            if diagnostic_trace:
+                diagnostic_event(
+                    diagnostic_trace,
+                    "AFTER_ITERATOR",
+                    global_epoch=global_epoch,
+                    stage=stage_name,
+                    state=diagnostic_training_state(model, optimizer, scheduler, scaler, epoch_generator, history),
+                )
+            pbar = tqdm(epoch_iterator, desc=f"{model_name} {stage_name} epoch {epoch}/{epochs}")
+            for batch_index, (images, targets) in enumerate(pbar):
+                first_batch = diagnostic_batch_state(images, targets) if diagnostic_trace and batch_index == 0 else None
                 images = [img.to(device, non_blocking=True) for img in images]
                 targets = [{k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
                 optimizer.zero_grad(set_to_none=True)
@@ -1751,8 +1819,28 @@ def train_torchvision_detector(
                     loss_dict = model(images, targets)
                     losses = sum(loss for loss in loss_dict.values())
                 scaler.scale(losses).backward()
+                if diagnostic_trace and batch_index == 0:
+                    diagnostic_event(
+                        diagnostic_trace,
+                        "FIRST_BATCH_PRE_STEP",
+                        global_epoch=global_epoch,
+                        stage=stage_name,
+                        batch=first_batch,
+                        loss_components={name: float(value.detach().cpu()) for name, value in loss_dict.items()},
+                        total_loss=float(losses.detach().cpu()),
+                        gradients=diagnostic_gradient_sha256(model),
+                        state=diagnostic_training_state(model, optimizer, scheduler, scaler, epoch_generator, history),
+                    )
                 scaler.step(optimizer)
                 scaler.update()
+                if diagnostic_trace and batch_index == 0:
+                    diagnostic_event(
+                        diagnostic_trace,
+                        "FIRST_BATCH_POST_STEP",
+                        global_epoch=global_epoch,
+                        stage=stage_name,
+                        state=diagnostic_training_state(model, optimizer, scheduler, scaler, epoch_generator, history),
+                    )
                 loss_sum += float(losses.detach().cpu())
                 n_batches += 1
                 pbar.set_postfix(loss=loss_sum / max(n_batches, 1))
@@ -1779,6 +1867,24 @@ def train_torchvision_detector(
                 }, best_path)
                 print(f"Saved new best {model_name}: val mAP@0.5:0.95={best_map:.4f}")
             resume_state = capture_rng_state()
+            if diagnostic_trace:
+                diagnostic_event(
+                    diagnostic_trace,
+                    "EPOCH_BOUNDARY",
+                    global_epoch=global_epoch,
+                    stage=stage_name,
+                    stage_epoch=epoch,
+                    state=diagnostic_training_state(model, optimizer, scheduler, scaler, epoch_generator, history),
+                    captured_rng={
+                        "python": diagnostic_checkpoint_state({"python_random_state": resume_state["python_random_state"]})["rng"]["python"],
+                        "numpy": diagnostic_checkpoint_state({"numpy_random_state": resume_state["numpy_random_state"]})["rng"]["numpy"],
+                        "torch_cpu": diagnostic_checkpoint_state({"torch_cpu_rng_state": resume_state["torch_cpu_rng_state"]})["rng"]["torch_cpu"],
+                        "torch_cuda": [
+                            diagnostic_checkpoint_state({"torch_cuda_rng_states": [value]})["rng"]["torch_cuda"][0]
+                            for value in resume_state["torch_cuda_rng_states"]
+                        ],
+                    },
+                )
             torch.save({
                 "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
                 "completed_epoch": global_epoch, "next_epoch": global_epoch + 1,
