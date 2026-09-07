@@ -13,6 +13,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from marine_3model_experiment import config_sha256
+from tools.smoke_comparison_contract import comparison_path, verify_comparison_artifact
 
 
 def digest(path: Path) -> str:
@@ -34,6 +35,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
+    parser.add_argument("--reference-out-dir", type=Path)
     args = parser.parse_args()
     cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     if not cfg.get("run", {}).get("quick_debug") or cfg.get("run", {}).get("evaluate") is not False:
@@ -72,11 +74,13 @@ def main() -> int:
     if bool(cfg.get("run", {}).get("resume_smoke_test", False)):
         if bool(cfg.get("canonical", False)) or bool(cfg.get("experiment", {}).get("canonical", False)):
             raise RuntimeError("BLOCKED — RESUME SMOKE CANNOT BE CANONICAL")
-        comparison = args.out_dir / "resume_smoke_comparison.json"
+        if args.reference_out_dir is None:
+            raise RuntimeError("Exact-resume verifier requires --reference-out-dir")
+        comparison = comparison_path(args.out_dir)
         manifest["resume_smoke_comparison"] = required(comparison)
-        comparison_data = json.loads(comparison.read_text(encoding="utf-8"))
-        if comparison_data.get("status") != "RESUME_SMOKE_COMPARISON_PASS":
-            raise RuntimeError("Resume smoke comparison did not pass")
+        plan = cfg["resume_smoke"]
+        total_epochs = int(plan["stage1_smoke_epochs"]) + int(plan["stage2_smoke_total_epochs"])
+        verify_comparison_artifact(args.out_dir, args.reference_out_dir, total_epochs)
     for name in ("results_overall_test.csv", "results_cross_domain.csv"):
         path = args.out_dir / name
         if path.exists() and path.stat().st_size > 1:

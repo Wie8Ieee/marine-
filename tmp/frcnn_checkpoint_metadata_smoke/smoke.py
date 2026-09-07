@@ -1,4 +1,4 @@
-"""Version 7: failure-durable, non-canonical Faster exact-resume smoke."""
+"""Version 11: non-canonical Faster smoke with verified numerical comparison."""
 from __future__ import annotations
 import datetime as dt
 import hashlib
@@ -13,12 +13,12 @@ from pathlib import Path
 import torch
 import yaml
 
-# Replaced with the committed Version 9 SHA immediately before the Kaggle push.
+# Replaced with the committed Version 11 SHA when packaging for Kaggle.
 COMMIT = "PINNED_COMMIT_REPLACED_BEFORE_LAUNCH"
 REPOSITORY = "https://github.com/Wie8Ieee/marine-.git"
 WORKING = Path("/kaggle/working")
-ROOT = WORKING / "frcnn_smoke_v9_export"
-RUNTIME = WORKING / "frcnn_smoke_v9_runtime"
+ROOT = WORKING / "frcnn_smoke_v11_export"
+RUNTIME = WORKING / "frcnn_smoke_v11_runtime"
 DIAGNOSTICS = ROOT / "diagnostics"
 CONFIGS = ROOT / "configs"
 ARTIFACTS = ROOT / "artifacts"
@@ -104,7 +104,7 @@ def fail(stage: str, exc: BaseException, return_code: int | None = None) -> None
 
 def bundle() -> None:
     try:
-        with zipfile.ZipFile(WORKING / "frcnn_smoke_v9_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(WORKING / "frcnn_smoke_v11_bundle.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for item in ROOT.rglob("*"):
                 if item.is_file(): archive.write(item, item.relative_to(WORKING))
         marker("BUNDLE_CREATED")
@@ -126,7 +126,7 @@ def main() -> bool:
         if actual != COMMIT: raise RuntimeError("BLOCKED — WRONG GIT COMMIT")
         marker("REPOSITORY_CLONED"); marker("COMMIT_VERIFIED", commit=actual)
         execute("dependencies", [sys.executable, "-u", "-m", "pip", "install", "-q", "-r", str(repo / "requirements.txt")], repo, launcher_env)
-        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v9_{actual[:8]}"
+        base = yaml.safe_load((repo / "config_runpod_frcnn_seed42.yaml").read_text(encoding="utf-8")); experiment_id = f"frcnn_exact_resume_smoke_v11_{actual[:8]}"
         environment = ROOT / "environment.json"; atomic_json(environment, {"smoke": True, "classification": "SMOKE_DEBUG_ONLY", "canonical": False, "experiment_id": experiment_id, "commit": actual, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"})
         env = dict(launcher_env, CANONICAL_GIT_COMMIT=actual, CANONICAL_EXPERIMENT_ID=experiment_id)
         ref_out, resume_out = REFERENCE_OUTPUT, RESUME_OUTPUT
@@ -142,14 +142,21 @@ def main() -> bool:
         if not resume_out.exists(): raise RuntimeError("PROCESS_B_OUTPUT_CONTRACT_FAILED — Process A output missing")
         process_b = write_config("process_b", config_for(base, resume_out, True, "session_b_resume", 2, last)); marker("PROCESS_B_CONFIG_CREATED")
         execute("process_b", [sys.executable, "-u", str(repo / "marine_3model_experiment.py"), "--config", str(process_b)], repo, env, DIAGNOSTICS / "process_b"); marker("PROCESS_B_COMPLETED")
-        marker("COMPARISON_STARTED"); reference_ckpt = checkpoint_summary(ref_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt"); resumed_ckpt = checkpoint_summary(resume_out / "runs" / "seed_42" / "torchvision" / "frcnn" / "last.pt")
-        checks = {"history": resumed_ckpt["epochs"] == [1, 2, 3], "lr": resumed_ckpt["lrs"] == reference_ckpt["lrs"], "optimizer": resumed_ckpt["optimizer"] == reference_ckpt["optimizer"], "scheduler": resumed_ckpt["scheduler"] == reference_ckpt["scheduler"], "best_epoch": resumed_ckpt["best_epoch"] == reference_ckpt["best_epoch"], "next_epoch": resumed_ckpt["next_epoch"] == 4}
-        atomic_json(DIAGNOSTICS / "resume_smoke_comparison.json", {"checks": checks, "reference": reference_ckpt, "resumed": resumed_ckpt})
-        if not all(checks.values()): raise RuntimeError("Exact-resume structural comparison failed")
+        marker("COMPARISON_STARTED")
+        from tools.smoke_comparison_contract import (
+            build_comparison, validate_comparison, write_comparison,
+        )
+        suffix = Path("runs/seed_42/torchvision/frcnn/last.pt")
+        comparison = build_comparison(ref_out / suffix, resume_out / suffix, total_epochs=3)
+        comparison_file = write_comparison(resume_out, comparison)
+        # The verifier consumes this one canonical source. FAIL reports remain exported.
+        marker("COMPARISON_ARTIFACT_WRITTEN", path=str(comparison_file), status=comparison["status"])
+        validate_comparison(comparison)
         marker("COMPARISON_PASSED"); marker("VERIFIER_STARTED")
-        execute("verifier", [sys.executable, "-u", str(repo / "tools/verify_smoke_artifacts.py"), "--out-dir", str(resume_out), "--config", str(process_b), "--environment", str(environment)], repo, env, DIAGNOSTICS / "verifier")
-        atomic_json(ROOT / "smoke_artifact_manifest.json", {"classification": "SMOKE_DEBUG_ONLY", "canonical": False, "commit": actual, "experiment_id": experiment_id}); marker("VERIFIER_PASSED")
-        RESULT.update({"smoke_status": "PASS", "last_verified_stage": "VERIFIER_PASSED", "failed_stage": None, "exception_type": None, "message": None, "return_code": None}); marker("SMOKE_PASS"); return True
+        execute("verifier", [sys.executable, "-u", str(repo / "tools/verify_smoke_artifacts.py"), "--out-dir", str(resume_out), "--reference-out-dir", str(ref_out), "--config", str(process_b), "--environment", str(environment)], repo, env, DIAGNOSTICS / "verifier")
+        shutil.copy2(resume_out / "smoke_artifact_manifest.json", ROOT / "smoke_artifact_manifest.json")
+        marker("VERIFIER_PASSED")
+        RESULT.update({"smoke_status": "PASS", "last_verified_stage": "VERIFIER_PASSED", "failed_stage": None, "exception_type": None, "message": None, "return_code": 0}); marker("SMOKE_PASS"); return True
     except Exception as exc:
         fail(LAST_STAGE, exc); return False
     finally:
