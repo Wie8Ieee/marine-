@@ -5,11 +5,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
+import numpy as np
 from PIL import Image
 
 from marine_3model_experiment import (
     YoloRecord, class_agnostic_detection_nms_once, exclude_conflicting_duplicate_groups,
-    checkpoint_identity, config_sha256, capture_rng_state, grouped_split, make_loader, restore_rng_state, sequence_id, validate_no_split_leakage,
+    checkpoint_identity, config_sha256, capture_rng_state, grouped_split, make_loader, normalize_rng_byte_state, restore_rng_state, sequence_id, validate_no_split_leakage,
     validate_resume_checkpoint,
 )
 
@@ -117,6 +118,49 @@ class SequenceSplitTests(unittest.TestCase):
         restore_rng_state(state)
         actual = (random.random(), np_state.random.rand(), torch.rand(1).item())
         self.assertEqual(expected, actual)
+
+    def test_cpu_rng_state_is_canonical_and_round_trips_through_checkpoint(self):
+        torch.manual_seed(42)
+        state = capture_rng_state()
+        saved = state["torch_cpu_rng_state"]
+        self.assertEqual(saved.device.type, "cpu")
+        self.assertEqual(saved.dtype, torch.uint8)
+        self.assertTrue(saved.is_contiguous())
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "rng.pt"
+            torch.save(state, checkpoint)
+            loaded = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        expected = torch.rand(5)
+        restore_rng_state(loaded)
+        actual = torch.rand(5)
+        self.assertTrue(torch.equal(expected, actual))
+
+    def test_rng_normalizer_accepts_version9_legacy_tensor_and_safe_forms(self):
+        legacy = torch.get_rng_state()  # Version 9 format: CPU uint8 Tensor, no format version.
+        for value in (legacy, list(legacy[:8].tolist()), bytes(legacy[:8].tolist()), np.asarray(legacy[:8].numpy(), dtype=np.uint8)):
+            normalized = normalize_rng_byte_state(value, "test_rng")
+            self.assertEqual(normalized.dtype, torch.uint8)
+            self.assertEqual(normalized.device.type, "cpu")
+            self.assertTrue(normalized.is_contiguous())
+
+    def test_rng_normalizer_rejects_float_and_out_of_range_values(self):
+        for value in (torch.tensor([1.0]), [0, 256], [-1, 2], np.asarray([1.0], dtype=np.float32)):
+            with self.assertRaisesRegex(RuntimeError, "Invalid test_rng"):
+                normalize_rng_byte_state(value, "test_rng")
+
+    def test_cuda_rng_list_normalization_is_validated_without_gpu(self):
+        states = [torch.tensor([1, 2, 3], dtype=torch.uint8), bytes([4, 5])]
+        normalized = [normalize_rng_byte_state(value, f"cuda[{index}]") for index, value in enumerate(states)]
+        self.assertTrue(all(item.dtype == torch.uint8 and item.device.type == "cpu" for item in normalized))
+
+    def test_local_interrupted_resume_rng_tail_matches_reference(self):
+        torch.manual_seed(42)
+        _head = torch.rand(3)
+        checkpoint = {"python_random_state": random.getstate(), "numpy_random_state": np.random.get_state(), **capture_rng_state()}
+        reference_tail = torch.rand(6)
+        restore_rng_state(checkpoint)
+        resumed_tail = torch.rand(6)
+        self.assertTrue(torch.equal(reference_tail, resumed_tail))
 
     def test_training_config_hash_ignores_session_control(self):
         base = {"seed": 42, "training": {"resume": False}, "run": {"quick_debug": False}, "provenance": {}}
