@@ -146,6 +146,7 @@ def canonical_training_config_bytes(cfg: dict) -> bytes:
         stable.pop(key, None)
     stable.get("training", {}).pop("resume", None)
     stable.get("run", {}).pop("quick_debug", None)
+    stable.get("run", {}).pop("preflight_sample_limit", None)
     stable.pop("session_control", None)
     return json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -160,6 +161,71 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_json_atomic(path: Path, payload: dict) -> None:
+    """Write durable JSON without exposing a partially written artifact."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def finalize_yolo_stage2_checkpoint(run_dir: Path) -> Path:
+    """Publish the highest validation mAP@0.5:0.95 epoch as Stage-2 best.pt.
+
+    Ultralytics' native ``best.pt`` uses its compound fitness.  The research
+    protocol instead names validation mAP@0.5:0.95 as the selection criterion,
+    so save_period=1 epoch artifacts are used to publish an auditable best file.
+    """
+    results_path = run_dir / "results.csv"
+    weights_dir = run_dir / "weights"
+    if not results_path.is_file():
+        raise RuntimeError(f"YOLO Stage 2 results.csv is missing: {results_path}")
+    frame = pd.read_csv(results_path)
+    frame.columns = [str(column).strip() for column in frame.columns]
+    columns = [column for column in frame.columns if "mAP50-95" in column]
+    if len(columns) != 1:
+        raise RuntimeError(f"Expected one YOLO mAP50-95 column, found {columns}")
+    values = pd.to_numeric(frame[columns[0]], errors="coerce")
+    if len(frame) == 0 or values.isna().any():
+        raise RuntimeError("YOLO Stage 2 validation mAP@0.5:0.95 history is incomplete")
+    row_index = int(values.idxmax())
+    displayed_epoch = int(frame.loc[row_index, "epoch"]) if "epoch" in frame.columns else row_index + 1
+    selected = weights_dir / f"epoch{row_index}.pt"
+    last_path = weights_dir / "last.pt"
+    if not selected.is_file() or selected.stat().st_size == 0:
+        raise RuntimeError(f"Selected YOLO Stage 2 epoch checkpoint is missing: {selected}")
+    if not last_path.is_file() or last_path.stat().st_size == 0:
+        raise RuntimeError(f"YOLO Stage 2 last.pt is missing or empty: {last_path}")
+    best_path = weights_dir / "best.pt"
+    native_best = weights_dir / "best_ultralytics_fitness.pt"
+    if best_path.is_file() and best_path.resolve() != selected.resolve() and not native_best.exists():
+        shutil.copy2(best_path, native_best)
+    temporary = weights_dir / ".best.pt.tmp"
+    shutil.copy2(selected, temporary)
+    os.replace(temporary, best_path)
+    write_json_atomic(run_dir / "checkpoint_selection.json", {
+        "schema_version": 1,
+        "status": "SELECTED_BY_VALIDATION_MAP50_95",
+        "stage": "stage2",
+        "metric": "validation mAP@0.5:0.95",
+        "results_column": columns[0],
+        "selected_epoch": displayed_epoch,
+        "selected_epoch_index": row_index,
+        "selected_metric": float(values.loc[row_index]),
+        "source_checkpoint": selected.name,
+        "source_checkpoint_sha256": sha256_file(selected),
+        "best_checkpoint": "weights/best.pt",
+        "best_checkpoint_sha256": sha256_file(best_path),
+        "last_checkpoint": "weights/last.pt",
+        "last_checkpoint_sha256": sha256_file(last_path),
+    })
+    return best_path
 
 
 def session_control_sha256(cfg: dict) -> str:
@@ -880,8 +946,11 @@ def prepare_datasets(cfg: dict) -> PreparedPaths:
         raise ValueError("split_mode must be 'official', 'stratified_70_15_15', or 'sequence_70_15_15'")
 
     if bool(cfg.get("run", {}).get("quick_debug", False)):
+        sample_limit = int(cfg.get("run", {}).get("preflight_sample_limit", 32))
+        if not 1 <= sample_limit <= 128:
+            raise RuntimeError("run.preflight_sample_limit must be between 1 and 128")
         for k in trash_splits:
-            trash_splits[k] = trash_splits[k][: min(32, len(trash_splits[k]))]
+            trash_splits[k] = trash_splits[k][: min(sample_limit, len(trash_splits[k]))]
 
     trash_dst = data_out / "trash_icra19_clean"
     trash_df = materialize_yolo_dataset(trash_splits, trash_dst, class_names, copy_files, remap_all_to_zero=False)
@@ -1458,6 +1527,11 @@ def evaluate_torchvision_model(
                 preds = model(images)
         else:
             preds = model(images)
+        for prediction in preds:
+            for key in ("boxes", "scores"):
+                value = prediction.get(key)
+                if value is not None and not torch.isfinite(value).all():
+                    raise RuntimeError(f"Non-finite {key} detected during {desc}")
         preds_cpu = [{k: v.detach().cpu() for k, v in p.items() if k in {"boxes", "scores", "labels"}} for p in preds]
         targets_cpu = [{k: v.detach().cpu() for k, v in t.items() if k in {"boxes", "labels"}} for t in targets]
         all_preds_raw.extend(preds_cpu)
@@ -1639,8 +1713,6 @@ def train_torchvision_detector(
         drop_last=True,
     )
     val_loader = make_loader(data_root, "val", input_size, len(class_names), batch, workers, shuffle=False)
-    test_loader = make_loader(data_root, "test", input_size, len(class_names), batch, workers, shuffle=False)
-    fps_loader = make_loader(data_root, "test", input_size, len(class_names), 1, workers, shuffle=False)
 
     epochs_head = int(train_cfg.get("epochs_head", 10))
     epochs_ft = int(train_cfg.get("epochs_finetune", 100))
@@ -1750,6 +1822,8 @@ def train_torchvision_detector(
                 with torch.cuda.amp.autocast(enabled=amp_enabled):
                     loss_dict = model(images, targets)
                     losses = sum(loss for loss in loss_dict.values())
+                if not torch.isfinite(losses):
+                    raise RuntimeError(f"Non-finite training loss in {model_name} {stage_name} epoch {epoch}")
                 scaler.scale(losses).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -1825,6 +1899,8 @@ def train_torchvision_detector(
             })
         return model, {}, math.nan, math.nan
 
+    test_loader = make_loader(data_root, "test", input_size, len(class_names), batch, workers, shuffle=False)
+    fps_loader = make_loader(data_root, "test", input_size, len(class_names), 1, workers, shuffle=False)
     ckpt = torch.load(best_path, map_location=device)
     model.load_state_dict(ckpt["model"])
     test_metrics = evaluate_torchvision_model(
@@ -1955,11 +2031,7 @@ def train_yolo_detector(paths: PreparedPaths, out_dir: Path, cfg: dict) -> Tuple
             hsv_v=float(aug.get("brightness", 0.0)), hsv_s=float(aug.get("saturation", 0.0)), hsv_h=0.0,
         )
         stage2_dir = Path(res2.save_dir)
-    best = primary_map_checkpoint(stage2_dir)
-    if not best.exists():
-        best = stage2_dir / "weights" / "last.pt"
-    if not best.exists():
-        raise RuntimeError("YOLO Stage 2 produced no checkpoint.")
+    best = finalize_yolo_stage2_checkpoint(stage2_dir)
     yolo_model = YOLO(str(best))
 
     if not bool(cfg.get("run", {}).get("evaluate", True)):
@@ -2480,7 +2552,7 @@ def main() -> None:
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
         "python_version": sys.version,
-        "git_commit": subprocess.run(
+        "git_commit": os.environ.get("CANONICAL_GIT_COMMIT") or subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True,
             capture_output=True, text=True,
         ).stdout.strip(),
@@ -2490,7 +2562,12 @@ def main() -> None:
     with (out_dir / "system_details.json").open("w", encoding="utf-8") as stream:
         json.dump(system_details, stream, indent=2)
     with (out_dir / "python_environment.txt").open("w", encoding="utf-8") as stream:
-        subprocess.run([sys.executable, "-m", "pip", "freeze"], check=True, stdout=stream, text=True)
+        packages = sorted(
+            (distribution.metadata.get("Name", "unknown"), distribution.version)
+            for distribution in importlib.metadata.distributions()
+        )
+        for package_name, package_version in packages:
+            stream.write(f"{package_name}=={package_version}\n")
     experiment_protocol = {
         "confidence_threshold": confidence_threshold(cfg),
         "iou_match_threshold": float(cfg.get("thresholds", {}).get("iou_match", 0.5)),
