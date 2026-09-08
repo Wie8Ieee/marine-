@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import torch
 import yaml
+import pandas as pd
 from PIL import Image
 
 import marine_3model_experiment as experiment
@@ -18,6 +19,7 @@ import tools.runpod_model_runner as runner
 from tools.runpod_release import sha256_file
 from tools.verify_dataset import inspect, parse_label
 from tools.verify_training_artifacts import ensure_no_evaluation
+from tools.verify_training_artifacts import verify_yolo_last_epoch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +103,22 @@ class CanonicalMembershipTests(unittest.TestCase):
 
 
 class ValidationContractTests(unittest.TestCase):
+    def test_ultralytics_stripped_last_checkpoint_proves_final_epoch(self):
+        history = pd.DataFrame({"epoch": [1], "metrics/mAP50-95(B)": [0.25]})
+        payload = {
+            "epoch": -1, "optimizer": None, "ema": None,
+            "train_results": {"epoch": [1], "metrics/mAP50-95(B)": [0.25]},
+        }
+        self.assertEqual(
+            verify_yolo_last_epoch(payload, history, 1), "ULTRALYTICS_STRIPPED_FINAL",
+        )
+
+    def test_ultralytics_stripped_last_checkpoint_rejects_incomplete_history(self):
+        history = pd.DataFrame({"epoch": [1], "metrics/mAP50-95(B)": [0.25]})
+        payload = {"epoch": -1, "optimizer": None, "ema": None, "train_results": {"epoch": []}}
+        with self.assertRaisesRegex(RuntimeError, "epoch count is incomplete"):
+            verify_yolo_last_epoch(payload, history, 1)
+
     def test_out_of_image_box_is_not_silently_clipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             label = Path(tmp) / "bad.txt"

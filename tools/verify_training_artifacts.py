@@ -44,6 +44,36 @@ def ensure_no_evaluation(out_dir: Path) -> None:
         raise RuntimeError(f"Training-only run contains evaluation output: {found}")
 
 
+def verify_yolo_last_epoch(payload: dict, history: pd.DataFrame, expected_rows: int) -> str:
+    """Accept either an explicit final epoch or Ultralytics' stripped-final encoding."""
+    epoch = int(payload.get("epoch", -2))
+    if epoch == expected_rows - 1:
+        return "EXPLICIT_FINAL_EPOCH"
+    if epoch != -1:
+        raise RuntimeError("YOLO last.pt does not represent the final Stage-2 epoch")
+    if payload.get("optimizer") is not None or payload.get("ema") is not None:
+        raise RuntimeError("YOLO last.pt has epoch=-1 but is not a stripped final checkpoint")
+    train_results = payload.get("train_results")
+    if not isinstance(train_results, dict):
+        raise RuntimeError("YOLO stripped last.pt has no embedded training history")
+    embedded_epochs = train_results.get("epoch")
+    if not isinstance(embedded_epochs, (list, tuple)) or len(embedded_epochs) != expected_rows:
+        raise RuntimeError("YOLO stripped last.pt embedded epoch count is incomplete")
+    if int(embedded_epochs[-1]) != expected_rows:
+        raise RuntimeError("YOLO stripped last.pt embedded final epoch is incorrect")
+    for column in history.columns:
+        embedded = train_results.get(str(column).strip())
+        if embedded is None:
+            continue
+        if not isinstance(embedded, (list, tuple)) or len(embedded) != expected_rows:
+            raise RuntimeError(f"YOLO stripped last.pt embedded history is incomplete: {column}")
+        expected = float(pd.to_numeric(history[column], errors="raise").iloc[-1])
+        actual = float(embedded[-1])
+        if not math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-8):
+            raise RuntimeError(f"YOLO stripped last.pt history mismatch: {column}")
+    return "ULTRALYTICS_STRIPPED_FINAL"
+
+
 def verify_yolo(out_dir: Path, expected_rows: tuple[int, int]) -> tuple[dict, dict]:
     from ultralytics import YOLO
     root = out_dir / "runs/seed_42/yolo"
@@ -97,9 +127,11 @@ def verify_yolo(out_dir: Path, expected_rows: tuple[int, int]) -> tuple[dict, di
         raise RuntimeError("YOLO selected epoch source SHA-256 mismatch")
     if int(checkpoint_payloads["best.pt"].get("epoch", -1)) != selected_index:
         raise RuntimeError("YOLO best.pt epoch metadata does not match selection")
-    if int(checkpoint_payloads["last.pt"].get("epoch", -1)) != expected_rows[1] - 1:
-        raise RuntimeError("YOLO last.pt does not represent the final Stage-2 epoch")
-    return checkpoints, {"stage1_rows": len(f1), "stage2_rows": len(f2), "selection": selection}
+    last_epoch_contract = verify_yolo_last_epoch(checkpoint_payloads["last.pt"], f2, expected_rows[1])
+    return checkpoints, {
+        "stage1_rows": len(f1), "stage2_rows": len(f2), "selection": selection,
+        "last_epoch_contract": last_epoch_contract,
+    }
 
 
 def verify_torchvision(model: str, out_dir: Path, cfg: dict, expected_commit: str, expected_rows: int) -> tuple[dict, dict]:
