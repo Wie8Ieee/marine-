@@ -10,6 +10,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from PIL import Image
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "manifests/trash_icra19/canonical_split_manifest.csv"
@@ -30,8 +32,9 @@ def normalized_text_sha256(path: Path) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def parse_label(path: Path) -> tuple[int, Counter[str], list[str]]:
+def parse_label(path: Path) -> tuple[int, Counter[str], list[str], Counter[str]]:
     counts: Counter[str] = Counter()
+    audit: Counter[str] = Counter()
     errors: list[str] = []
     objects = 0
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -40,27 +43,51 @@ def parse_label(path: Path) -> tuple[int, Counter[str], list[str]]:
         fields = raw.split()
         if len(fields) != 5:
             errors.append(f"{path}:{number}: expected 5 fields")
+            audit["invalid_boxes"] += 1
             continue
         try:
             class_id = int(fields[0])
             coords = [float(value) for value in fields[1:]]
         except ValueError:
             errors.append(f"{path}:{number}: non-numeric value")
+            audit["invalid_boxes"] += 1
             continue
         if class_id not in range(3):
             errors.append(f"{path}:{number}: invalid class {class_id}")
+            audit["invalid_boxes"] += 1
             continue
-        if not all(0.0 <= value <= 1.0 for value in coords) or coords[2] <= 0 or coords[3] <= 0:
+        if not all(0.0 <= value <= 1.0 for value in coords):
             errors.append(f"{path}:{number}: invalid normalized box")
+            audit["invalid_boxes"] += 1
+            continue
+        cx, cy, width, height = coords
+        if width <= 0 or height <= 0:
+            errors.append(f"{path}:{number}: zero-area box")
+            audit["zero_area_boxes"] += 1
+            audit["invalid_boxes"] += 1
+            continue
+        x1, y1, x2, y2 = cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2
+        if x1 < 0 or y1 < 0 or x2 > 1 or y2 > 1 or x2 <= x1 or y2 <= y1:
+            errors.append(f"{path}:{number}: box requires clipping")
+            audit["boxes_requiring_clipping"] += 1
+            audit["invalid_boxes"] += 1
             continue
         objects += 1
         counts[CLASS_NAMES[class_id]] += 1
-    return objects, counts, errors
+    return objects, counts, errors, audit
+
+
+def fully_decode_image(path: Path) -> None:
+    with Image.open(path) as image:
+        image.load()
+        rgb = image.convert("RGB")
+        rgb.load()
 
 
 def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[dict[str, str]], list[str]]:
     manifest = manifest.resolve()
-    rows = list(csv.DictReader(manifest.open(encoding="utf-8", newline="")))
+    with manifest.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
     errors: list[str] = []
     file_rows: list[dict[str, str]] = []
     aggregate = hashlib.sha256()
@@ -71,6 +98,10 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
     sequences: dict[str, str] = {}
     seen_images: set[str] = set()
     seen_labels: set[str] = set()
+    expected_image_paths: set[Path] = set()
+    expected_label_paths: set[Path] = set()
+    box_audit: Counter[str] = Counter()
+    decode_failures = 0
 
     for row in sorted(rows, key=lambda item: item["image_path"]):
         image_rel = Path(row["image_path"]).as_posix()
@@ -85,6 +116,8 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
             label = data_root / Path(*label_parts[label_parts.index("labels"):])
         split = row["split"]
         sequence = row["sequence_id"]
+        expected_image_paths.add(image.resolve())
+        expected_label_paths.add(label.resolve())
         if image_rel in seen_images:
             errors.append(f"duplicate image path: {image_rel}")
         if label_rel in seen_labels:
@@ -97,6 +130,12 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
         if not label.is_file():
             errors.append(f"missing label: {label_rel}")
             continue
+        try:
+            fully_decode_image(image)
+        except Exception as exc:
+            decode_failures += 1
+            errors.append(f"image decode failure: {image_rel}: {type(exc).__name__}: {exc}")
+            continue
         owner = sequences.setdefault(sequence, split)
         if owner != split:
             errors.append(f"sequence leakage: {sequence} in {owner} and {split}")
@@ -106,7 +145,8 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
         pair_material = f"{image_rel}\0{image_hash}\0{label_rel}\0{label_hash}".encode()
         pair_hash = hashlib.sha256(pair_material).hexdigest()
         aggregate.update(pair_material + f"\0{split}\n".encode())
-        objects, classes, label_errors = parse_label(label)
+        objects, classes, label_errors, label_audit = parse_label(label)
+        box_audit.update(label_audit)
         errors.extend(label_errors)
         expected_objects = int(row["object_count"])
         if objects != expected_objects:
@@ -136,6 +176,26 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
             }
         )
 
+    membership = {"missing_images": 0, "extra_images": 0, "missing_labels": 0, "extra_labels": 0}
+    if data_root is not None:
+        actual_image_paths = {
+            path.resolve() for path in (data_root / "images").rglob("*")
+            if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        }
+        actual_label_paths = {
+            path.resolve() for path in (data_root / "labels").rglob("*.txt") if path.is_file()
+        }
+        differences = {
+            "missing_images": expected_image_paths - actual_image_paths,
+            "extra_images": actual_image_paths - expected_image_paths,
+            "missing_labels": expected_label_paths - actual_label_paths,
+            "extra_labels": actual_label_paths - expected_label_paths,
+        }
+        membership = {name: len(paths) for name, paths in differences.items()}
+        for name, paths in differences.items():
+            for path in sorted(paths):
+                errors.append(f"{name.replace('_', ' ')}: {path}")
+
     fingerprint = {
         "schema_version": 1,
         "hash_algorithm": "SHA-256",
@@ -146,7 +206,12 @@ def inspect(manifest: Path, data_root: Path | None = None) -> tuple[dict, list[d
         "counts": dict(totals),
         "sequences": len(sequences),
         "sequence_overlap": sum(1 for error in errors if error.startswith("sequence leakage")),
-        "malformed_or_out_of_range_boxes": len([error for error in errors if ":" in error and "label" not in error]),
+        "malformed_or_out_of_range_boxes": box_audit["invalid_boxes"],
+        "invalid_boxes": box_audit["invalid_boxes"],
+        "boxes_requiring_clipping": box_audit["boxes_requiring_clipping"],
+        "zero_area_boxes": box_audit["zero_area_boxes"],
+        "full_image_decode_failures": decode_failures,
+        "membership": membership,
         "splits": {name: dict(values) for name, values in split_counts.items()},
     }
     return fingerprint, file_rows, errors

@@ -33,8 +33,13 @@ def finite_csv(path: Path, rows: int) -> pd.DataFrame:
 
 
 def ensure_no_evaluation(out_dir: Path) -> None:
-    forbidden = ("results_overall_test.csv", "results_cross_domain.csv", "fps_results.json")
-    found = [str(path) for name in forbidden for path in out_dir.rglob(name) if path.is_file() and path.stat().st_size > 0]
+    forbidden = (
+        "results_overall_test.csv", "results_cross_domain.csv", "fps_results.json",
+        "domain_feature_shift.csv", "river_excluded_conflicting_duplicates.csv",
+    )
+    found = [str(path) for name in forbidden for path in out_dir.rglob(name) if path.is_file()]
+    found.extend(str(path) for part in ("qualitative_errors", "river_trash_class_agnostic")
+                 for path in out_dir.rglob(part) if path.exists())
     if found:
         raise RuntimeError(f"Training-only run contains evaluation output: {found}")
 
@@ -45,6 +50,14 @@ def verify_yolo(out_dir: Path, expected_rows: tuple[int, int]) -> tuple[dict, di
     stage1, stage2 = root / "yolov8s_stage1", root / "yolov8s_stage2"
     f1 = finite_csv(stage1 / "results.csv", expected_rows[0])
     f2 = finite_csv(stage2 / "results.csv", expected_rows[1])
+    transition_path = stage2 / "stage2_initialization.json"
+    required(transition_path)
+    transition = json.loads(transition_path.read_text(encoding="utf-8"))
+    stage1_last = stage1 / "weights" / "last.pt"
+    if transition.get("status") != "STAGE2_INITIALIZED_FROM_STAGE1_LAST":
+        raise RuntimeError("YOLO Stage 2 was not initialized from the final Stage-1 state")
+    if transition.get("source_checkpoint_sha256") != required(stage1_last)["sha256"]:
+        raise RuntimeError("YOLO Stage-1-to-Stage-2 checkpoint SHA-256 mismatch")
     selection_path = stage2 / "checkpoint_selection.json"
     required(selection_path)
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
@@ -136,7 +149,21 @@ def verify_torchvision(model: str, out_dir: Path, cfg: dict, expected_commit: st
 def verify(model: str, out_dir: Path, config_path: Path, expected_commit: str, preflight: bool = False, execution_record: Path | None = None) -> dict:
     cfg = load_and_validate_config(config_path, model, allow_preflight=preflight)
     expected_rows = 2 if preflight else 110
-    evidence = {name: required(out_dir / name) for name in ("used_config.yaml", "system_details.json", "python_environment.txt", "experiment_protocol.json", "environment.txt")}
+    evidence = {name: required(out_dir / name) for name in (
+        "used_config.yaml", "system_details.json", "python_environment.txt", "experiment_protocol.json",
+        "environment.txt", "canonical_source_membership.json", "canonical_materialization_audit.json",
+    )}
+    source_membership = json.loads((out_dir / "canonical_source_membership.json").read_text(encoding="utf-8"))
+    materialization = json.loads((out_dir / "canonical_materialization_audit.json").read_text(encoding="utf-8"))
+    if source_membership.get("status") != "PASS" or any(int(source_membership.get(key, -1)) != 0 for key in (
+        "missing_images", "extra_images", "missing_labels", "extra_labels", "sequence_overlap",
+    )):
+        raise RuntimeError("Canonical source membership evidence is invalid")
+    if materialization.get("status") != "PASS" or any(int(materialization.get(key, -1)) != 0 for key in (
+        "images_moved_from_canonical_split", "sequences_moved_from_canonical_split", "sequence_overlap",
+        "missing_materialized_images", "extra_materialized_images",
+    )):
+        raise RuntimeError("Canonical materialized split evidence is invalid")
     used = yaml.safe_load((out_dir / "used_config.yaml").read_text(encoding="utf-8"))
     if training_config_sha256(used) != training_config_sha256(cfg):
         raise RuntimeError("Resolved configuration does not match requested configuration")

@@ -92,9 +92,12 @@ class ArtifactContractTests(unittest.TestCase):
                 out=Path(tmp); root=out/'runs/seed_42/yolo'; s1=root/'yolov8s_stage1'; s2=root/'yolov8s_stage2'; (s1/'weights').mkdir(parents=True); (s2/'weights').mkdir(parents=True)
                 pd.DataFrame({'epoch':range(1,11),'metrics/mAP50-95(B)':[.1]*10}).to_csv(s1/'results.csv',index=False)
                 vals=[.1]*99+[.9]; pd.DataFrame({'epoch':range(1,101),'metrics/mAP50-95(B)':vals}).to_csv(s2/'results.csv',index=False)
-                for name,data in [('epoch99.pt',b'z'),('best.pt',b'z'),('last.pt',b'l')]: (s2/'weights'/name).write_bytes(data)
+                (s1/'weights/last.pt').write_bytes(b'stage1-last')
                 import hashlib
-                h=lambda b:hashlib.sha256(b).hexdigest(); (s2/'checkpoint_selection.json').write_text(json.dumps({'status':'SELECTED_BY_VALIDATION_MAP50_95','stage':'stage2','selected_epoch_index':99,'source_checkpoint':'epoch99.pt','source_checkpoint_sha256':h(b'z'),'best_checkpoint_sha256':h(b'z'),'last_checkpoint_sha256':h(b'l')}))
+                h=lambda b:hashlib.sha256(b).hexdigest()
+                (s2/'stage2_initialization.json').write_text(json.dumps({'status':'STAGE2_INITIALIZED_FROM_STAGE1_LAST','source_checkpoint':str(s1/'weights/last.pt'),'source_checkpoint_sha256':h(b'stage1-last')}))
+                for name,data in [('epoch99.pt',b'z'),('best.pt',b'z'),('last.pt',b'l')]: (s2/'weights'/name).write_bytes(data)
+                (s2/'checkpoint_selection.json').write_text(json.dumps({'status':'SELECTED_BY_VALIDATION_MAP50_95','stage':'stage2','selected_epoch_index':99,'source_checkpoint':'epoch99.pt','source_checkpoint_sha256':h(b'z'),'best_checkpoint_sha256':h(b'z'),'last_checkpoint_sha256':h(b'l')}))
                 fake.YOLO=lambda path: types.SimpleNamespace(model=object(),ckpt={'epoch':99,'train_args':{'seed':42,'imgsz':640,'batch':16,'epochs':100,'name':'yolov8s_stage2'}})
                 previous=sys.modules.get('ultralytics'); sys.modules['ultralytics']=fake
                 _,details=verify_yolo(out,(10,100)); self.assertEqual(details['stage2_rows'],100)

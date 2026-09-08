@@ -20,10 +20,14 @@ def torchvision_cuda_ops() -> dict:
     return {"nms":"PASS","roi_align_forward_backward":"PASS"}
 
 def verify_images(manifest:Path,data_root:Path)->int:
-    rows=list(csv.DictReader(manifest.open(encoding="utf-8",newline="")))
+    with manifest.open(encoding="utf-8",newline="") as stream:
+        rows=list(csv.DictReader(stream))
     for row in rows:
         parts=Path(row["image_path"]).parts; path=data_root/Path(*parts[parts.index("images"):])
-        with Image.open(path) as image: image.verify()
+        with Image.open(path) as image:
+            image.load()
+            rgb=image.convert("RGB")
+            rgb.load()
     return len(rows)
 
 def persistence_probe(root:Path)->dict:

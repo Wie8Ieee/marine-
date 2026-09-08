@@ -19,6 +19,11 @@ All use Seed 42, classes `plastic,bio,rov`, the canonical sequence-safe split,
 dataset SHA-256 `5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf`,
 and split SHA-256 `a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94`.
 Model input sizes and native checkpoint formats are intentionally architecture-specific.
+The immutable `canonical_split_manifest.csv` is the only source of split membership;
+the launcher does not regenerate or rebalance it. Source and materialized membership
+must match exactly (missing, extra, moved, and overlapping images/sequences are all zero).
+YOLO Stage 2 starts from the non-empty Stage-1 `last.pt`, and the transition records
+the source checkpoint SHA-256. TorchVision checkpoints are published atomically.
 
 ## Storage and package setup
 
@@ -58,6 +63,9 @@ records peak memory, and verifies the persistent mount.
 
 The command prints `PREFLIGHT_EVIDENCE=...`. Official commands reject missing,
 failed, stale, wrong-commit, wrong-config, or wrong-fingerprint evidence.
+Training-only runs have no River dependency and must not create Test, River, FPS,
+prediction, or qualitative-analysis artifacts—even empty placeholders. Their artifact
+verifier fails closed if any such output exists.
 
 ## Train unattended
 

@@ -12,7 +12,7 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.runpod_release import atomic_json, load_and_validate_config, source_commit  # noqa: E402
+from tools.runpod_release import atomic_json, load_and_validate_config, sha256_file, source_commit  # noqa: E402
 
 
 def utc() -> str:
@@ -103,7 +103,10 @@ def run(model: str, config: Path, repo: Path, commit: str, mode: str,
         if not environment.is_file():
             raise RuntimeError(f"Environment record missing: {environment}")
         (output / "environment.txt").write_bytes(environment.read_bytes())
-        record.update({"ended_utc": utc(), "peak_gpu_memory_mib": max(samples) if samples else None})
+        record.update({
+            "status": "TRAINING_COMPLETE_PENDING_VERIFICATION", "ended_utc": utc(),
+            "peak_gpu_memory_mib": max(samples) if samples else None,
+        })
         atomic_json(execution, record)
         command = [
             sys.executable, "-u", str(repo / "tools/verify_training_artifacts.py"),
@@ -117,6 +120,14 @@ def run(model: str, config: Path, repo: Path, commit: str, mode: str,
             "status": "VERIFIED_COMPLETE", "failed_stage": None,
             "artifact_manifest": str(output / "training_artifact_manifest.json"),
         })
+        atomic_json(execution, record)
+        manifest_path = output / "training_artifact_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["evidence"]["execution"] = {
+            "path": str(execution.resolve()), "size_bytes": execution.stat().st_size,
+            "sha256": sha256_file(execution),
+        }
+        atomic_json(manifest_path, manifest)
     except Exception as exc:
         primary_error = exc
         record.update({
@@ -124,12 +135,18 @@ def run(model: str, config: Path, repo: Path, commit: str, mode: str,
             "message": str(exc), "traceback": traceback.format_exc(),
             "ended_utc": utc(),
         })
+        manifest_path = output / "training_artifact_manifest.json"
+        if manifest_path.exists():
+            atomic_json(manifest_path, {
+                "schema_version": 2, "status": "FAILED", "model": model,
+                "source_commit": commit, "exception_type": type(exc).__name__,
+                "message": str(exc),
+            })
     finally:
         stop.set()
         thread.join(timeout=3)
         record["peak_gpu_memory_mib"] = max(samples) if samples else record.get("peak_gpu_memory_mib")
-        if not execution.exists():
-            atomic_json(execution, record)
+        atomic_json(execution, record)
         atomic_json(state, record)
     if primary_error:
         raise primary_error

@@ -175,6 +175,17 @@ def write_json_atomic(path: Path, payload: dict) -> None:
     os.replace(temporary, path)
 
 
+def atomic_torch_save(payload: dict, path: Path) -> None:
+    """Durably publish a checkpoint without exposing a partial final file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("wb") as stream:
+        torch.save(payload, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
 def finalize_yolo_stage2_checkpoint(run_dir: Path) -> Path:
     """Publish the highest validation mAP@0.5:0.95 epoch as Stage-2 best.pt.
 
@@ -226,6 +237,14 @@ def finalize_yolo_stage2_checkpoint(run_dir: Path) -> Path:
         "last_checkpoint_sha256": sha256_file(last_path),
     })
     return best_path
+
+
+def yolo_stage2_initialization_checkpoint(stage1_dir: Path) -> Path:
+    """A sequential frozen-to-unfrozen protocol continues from Stage 1 last.pt."""
+    checkpoint = stage1_dir / "weights" / "last.pt"
+    if not checkpoint.is_file() or checkpoint.stat().st_size <= 0:
+        raise RuntimeError("YOLO Stage 1 produced no non-empty last checkpoint.")
+    return checkpoint
 
 
 def session_control_sha256(cfg: dict) -> str:
@@ -541,34 +560,32 @@ def scan_yolo_records(root: Path) -> List[YoloRecord]:
 
 
 def read_yolo_label(label_path: Optional[Path], num_classes: int, image_size: Tuple[int, int], remap_all_to_zero: bool = False) -> List[Tuple[int, float, float, float, float]]:
-    """Return valid YOLO normalized labels. Invalid boxes/classes are skipped."""
+    """Read YOLO labels strictly; invalid annotations must never be dropped silently."""
     if label_path is None or not label_path.exists():
         return []
-    w, h = image_size
     labels: List[Tuple[int, float, float, float, float]] = []
     with label_path.open("r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
+        for line_number, line in enumerate(f, 1):
             parts = line.strip().split()
-            if len(parts) < 5:
+            if not parts:
                 continue
+            if len(parts) != 5:
+                raise RuntimeError(f"Invalid YOLO label field count: {label_path}:{line_number}")
             try:
-                cls = int(float(parts[0]))
+                cls = int(parts[0])
                 vals = list(map(float, parts[1:5]))
             except ValueError:
-                continue
+                raise RuntimeError(f"Non-numeric YOLO label: {label_path}:{line_number}") from None
             if any(not np.isfinite(v) for v in vals):
-                continue
+                raise RuntimeError(f"Non-finite YOLO box: {label_path}:{line_number}")
             if remap_all_to_zero:
                 cls = 0
             elif cls < 0 or cls >= num_classes:
-                continue
-            xyxy = clip_xyxy(xywhn_to_xyxy(vals, w, h), w, h)
-            if xyxy is None:
-                continue
-            cx, cy, bw, bh = xyxy_to_xywhn(xyxy, w, h)
-            # Keep numbers safe inside YOLO expected range.
-            if bw <= 0 or bh <= 0:
-                continue
+                raise RuntimeError(f"Invalid YOLO class: {label_path}:{line_number}: {cls}")
+            cx, cy, bw, bh = vals
+            x1, y1, x2, y2 = cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2
+            if bw <= 0 or bh <= 0 or x1 < 0 or y1 < 0 or x2 > 1 or y2 > 1:
+                raise RuntimeError(f"Invalid or clipping-required YOLO box: {label_path}:{line_number}")
             labels.append((cls, cx, cy, bw, bh))
     return labels
 
@@ -673,6 +690,131 @@ def grouped_split(records: List[YoloRecord], cfg: dict, seed: int) -> Dict[str, 
     if any(not records for records in result.values()):
         raise RuntimeError(f"Sequence split produced an empty partition: {loads}")
     return result
+
+
+def _relocated_manifest_path(data_root: Path, manifest_value: str, anchor: str) -> Path:
+    parts = Path(manifest_value).parts
+    if anchor not in parts:
+        raise RuntimeError(f"Canonical manifest path has no {anchor!r} component: {manifest_value}")
+    return data_root / Path(*parts[parts.index(anchor):])
+
+
+def load_canonical_split_records(cfg: dict, repo_root: Path) -> Tuple[Dict[str, List[YoloRecord]], dict]:
+    """Load the immutable image-to-split assignment; never regenerate it."""
+    provenance = cfg.get("provenance", {})
+    manifest_path = Path(str(provenance.get("canonical_manifest", "")))
+    if not manifest_path.is_absolute():
+        manifest_path = repo_root / manifest_path
+    summary_path = manifest_path.with_name("canonical_split_summary.json")
+    if not manifest_path.is_file() or not summary_path.is_file():
+        raise RuntimeError("Canonical split manifest or summary is missing")
+    normalized = manifest_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    actual_manifest_sha = hashlib.sha256(normalized).hexdigest()
+    expected_manifest_sha = str(provenance.get("split_manifest_sha256", ""))
+    if actual_manifest_sha != expected_manifest_sha:
+        raise RuntimeError(
+            f"Canonical manifest SHA-256 mismatch: {actual_manifest_sha} != {expected_manifest_sha}"
+        )
+
+    data_root = Path(cfg["trash_root"]).expanduser().resolve()
+    with manifest_path.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    records_by_split: Dict[str, List[YoloRecord]] = {name: [] for name in ("train", "val", "test")}
+    expected_images: set[Path] = set()
+    expected_labels: set[Path] = set()
+    seen_sequences: Dict[str, str] = {}
+    for row in rows:
+        split = row.get("split", "")
+        if split not in records_by_split:
+            raise RuntimeError(f"Invalid canonical split value: {split!r}")
+        image = _relocated_manifest_path(data_root, row["image_path"], "images").resolve()
+        label = _relocated_manifest_path(data_root, row["label_path"], "labels").resolve()
+        if image in expected_images or label in expected_labels:
+            raise RuntimeError(f"Duplicate canonical manifest member: {image} / {label}")
+        expected_images.add(image)
+        expected_labels.add(label)
+        sequence = row["sequence_id"]
+        previous = seen_sequences.setdefault(sequence, split)
+        if previous != split:
+            raise RuntimeError(f"Canonical manifest sequence leakage: {sequence} in {previous} and {split}")
+        records_by_split[split].append(YoloRecord(image=image, label=label, split_hint=split))
+
+    actual_images = {
+        path.resolve() for path in (data_root / "images").rglob("*")
+        if path.is_file() and path.suffix.lower() in IMG_EXTS
+    }
+    actual_labels = {
+        path.resolve() for path in (data_root / "labels").rglob("*.txt") if path.is_file()
+    }
+    membership = {
+        "missing_images": sorted(str(path) for path in expected_images - actual_images),
+        "extra_images": sorted(str(path) for path in actual_images - expected_images),
+        "missing_labels": sorted(str(path) for path in expected_labels - actual_labels),
+        "extra_labels": sorted(str(path) for path in actual_labels - expected_labels),
+    }
+    if any(membership.values()):
+        counts = {key: len(value) for key, value in membership.items()}
+        raise RuntimeError(f"Canonical dataset membership mismatch: {counts}")
+
+    expected_splits = summary.get("splits", {})
+    expected_total = int(summary.get("images", -1))
+    actual_counts = {name: len(records) for name, records in records_by_split.items()}
+    declared_counts = {name: int(expected_splits.get(name, {}).get("images", -1)) for name in records_by_split}
+    if len(rows) != expected_total or actual_counts != declared_counts:
+        raise RuntimeError(
+            f"Canonical split counts mismatch: total={len(rows)}/{expected_total}, "
+            f"actual={actual_counts}, declared={declared_counts}"
+        )
+    return records_by_split, {
+        "canonical_manifest_sha256": actual_manifest_sha,
+        "expected_total_images": expected_total,
+        "actual_total_images": len(rows),
+        "expected_split_images": declared_counts,
+        "actual_split_images": actual_counts,
+        "missing_images": 0, "extra_images": 0, "missing_labels": 0, "extra_labels": 0,
+        "sequence_overlap": 0,
+    }
+
+
+def verify_materialized_split_membership(
+    frame: pd.DataFrame,
+    canonical: Dict[str, List[YoloRecord]],
+    cfg: dict,
+    report_path: Path,
+) -> dict:
+    expected = {record.image.resolve(): split for split, records in canonical.items() for record in records}
+    actual = {Path(row.source_image).resolve(): str(row.split) for row in frame.itertuples()}
+    moved_images = sorted(str(path) for path in expected.keys() & actual.keys() if expected[path] != actual[path])
+    missing = sorted(str(path) for path in expected.keys() - actual.keys())
+    extra = sorted(str(path) for path in actual.keys() - expected.keys())
+    expected_sequences = {sequence_id(record, cfg): split for split, records in canonical.items() for record in records}
+    actual_sequences: Dict[str, str] = {}
+    overlap: set[str] = set()
+    moved_sequences: set[str] = set()
+    for split, records in canonical.items():
+        for record in records:
+            if record.image.resolve() not in actual:
+                continue
+            sequence = sequence_id(record, cfg)
+            observed = actual[record.image.resolve()]
+            prior = actual_sequences.setdefault(sequence, observed)
+            if prior != observed:
+                overlap.add(sequence)
+            if expected_sequences[sequence] != observed:
+                moved_sequences.add(sequence)
+    report = {
+        "status": "PASS" if not (moved_images or moved_sequences or missing or extra or overlap) else "FAIL",
+        "images_moved_from_canonical_split": len(moved_images),
+        "sequences_moved_from_canonical_split": len(moved_sequences),
+        "sequence_overlap": len(overlap),
+        "missing_materialized_images": len(missing),
+        "extra_materialized_images": len(extra),
+    }
+    write_json_atomic(report_path, report)
+    if report["status"] != "PASS":
+        raise RuntimeError(f"Materialized split does not match canonical manifest: {report}")
+    return report
 
 
 def save_split_manifests(splits: Dict[str, List[YoloRecord]], cfg: dict, out_dir: Path) -> None:
@@ -908,42 +1050,21 @@ def prepare_datasets(cfg: dict) -> PreparedPaths:
     split_mode = cfg.get("split_mode", "stratified_70_15_15")
     copy_files = bool(cfg.get("copy_files", False))
 
-    print(f"[{now()}] Scanning Trash dataset: {trash_root}")
-    trash_records_all = scan_yolo_records(trash_root)
-    if not trash_records_all:
-        raise RuntimeError(f"No images found under {trash_root}")
-
-    # Validate class labels and skip images with no label file only if they are truly empty.
-    dom = {}
-    kept = []
-    skipped_bad = 0
-    for r in tqdm(trash_records_all, desc="Validating Trash labels"):
-        try:
-            size = image_size(r.image)
-        except Exception:
-            skipped_bad += 1
-            continue
-        labels = read_yolo_label(r.label, len(class_names), size, remap_all_to_zero=False)
-        # Keep images even if labels are empty; they are useful as background validation/test cases.
-        dom[r.image] = dominant_class(labels, len(class_names))
-        kept.append(r)
-    trash_records = kept
-    if bool(cfg.get("leakage", {}).get("deduplicate", True)):
-        trash_records = deduplicate_records(trash_records, out_dir / "deduplication_report.csv")
-    if skipped_bad:
-        print(f"Skipped {skipped_bad} unreadable images.")
-
-    if split_mode == "official":
-        trash_splits = official_split(trash_records)
-    elif split_mode == "stratified_70_15_15":
-        trash_splits = stratified_split(trash_records, dom, seed)
-    elif split_mode == "sequence_70_15_15":
-        trash_splits = grouped_split(trash_records, cfg, seed)
-        validate_no_split_leakage(trash_splits, cfg)
-        save_sequence_split_audit(trash_splits, cfg, out_dir / "sequence_split_audit.csv")
-        save_split_manifests(trash_splits, cfg, out_dir)
-    else:
-        raise ValueError("split_mode must be 'official', 'stratified_70_15_15', or 'sequence_70_15_15'")
+    print(f"[{now()}] Loading canonical Trash split manifest: {trash_root}")
+    if split_mode != "sequence_70_15_15":
+        raise RuntimeError("Canonical training requires split_mode=sequence_70_15_15")
+    trash_splits, membership_report = load_canonical_split_records(
+        cfg, Path(__file__).resolve().parent,
+    )
+    validate_no_split_leakage(trash_splits, cfg)
+    save_sequence_split_audit(trash_splits, cfg, out_dir / "sequence_split_audit.csv")
+    save_split_manifests(trash_splits, cfg, out_dir)
+    pd.DataFrame(columns=["removed_image", "kept_image", "sha256"]).to_csv(
+        out_dir / "deduplication_report.csv", index=False,
+    )
+    write_json_atomic(out_dir / "canonical_source_membership.json", {
+        "status": "PASS", **membership_report,
+    })
 
     if bool(cfg.get("run", {}).get("quick_debug", False)):
         sample_limit = int(cfg.get("run", {}).get("preflight_sample_limit", 32))
@@ -954,6 +1075,9 @@ def prepare_datasets(cfg: dict) -> PreparedPaths:
 
     trash_dst = data_out / "trash_icra19_clean"
     trash_df = materialize_yolo_dataset(trash_splits, trash_dst, class_names, copy_files, remap_all_to_zero=False)
+    verify_materialized_split_membership(
+        trash_df, trash_splits, cfg, out_dir / "canonical_materialization_audit.json",
+    )
 
     river_yaml = None
     river_dst = None
@@ -1078,9 +1202,7 @@ class YoloDetectionDataset(Dataset):
         boxes_xyxy = []
         labels_out = []
         for cls, cx, cy, bw, bh in labels:
-            xyxy = clip_xyxy(xywhn_to_xyxy([cx, cy, bw, bh], w, h), w, h)
-            if xyxy is None:
-                continue
+            xyxy = xywhn_to_xyxy([cx, cy, bw, bh], w, h)
             boxes_xyxy.append(xyxy)
             # Torchvision detection reserves label 0 for background during training.
             labels_out.append(1 if self.class_agnostic else int(cls) + 1)
@@ -1782,7 +1904,7 @@ def train_torchvision_detector(
         if not best_path.exists():
             warnings.warn("best.pt is missing; using the resumed last.pt as the initial best checkpoint.")
             best_map = float(resume_checkpoint.get("val_metrics", {}).get("map", best_map))
-            torch.save({
+            atomic_torch_save({
                 "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
                 "val_metrics": resume_checkpoint.get("val_metrics", {}),
             }, best_path)
@@ -1844,7 +1966,7 @@ def train_torchvision_detector(
             if val_metrics["map"] > best_map:
                 best_map = val_metrics["map"]
                 best_epoch = global_epoch
-                torch.save({
+                atomic_torch_save({
                     "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
                     "architecture": architecture, "stage": stage_name, "stage_epoch": epoch,
                     "val_metrics": val_metrics, "best_map": best_map,
@@ -1853,7 +1975,7 @@ def train_torchvision_detector(
                 }, best_path)
                 print(f"Saved new best {model_name}: val mAP@0.5:0.95={best_map:.4f}")
             resume_state = capture_rng_state()
-            torch.save({
+            atomic_torch_save({
                 "model": model.state_dict(), "cfg": cfg, "epoch": global_epoch,
                 "completed_epoch": global_epoch, "next_epoch": global_epoch + 1,
                 "architecture": architecture,
@@ -2008,9 +2130,13 @@ def train_yolo_detector(paths: PreparedPaths, out_dir: Path, cfg: dict) -> Tuple
     elif resume_enabled:
         stage1_best = primary_map_checkpoint(stage1_dir)
     if not stage1_best.exists():
-        stage1_best = stage1_dir / "weights" / "last.pt"
-    if not stage1_best.exists():
-        raise RuntimeError("YOLO Stage 1 produced no checkpoint.")
+        raise RuntimeError("YOLO Stage 1 produced no best checkpoint.")
+    stage1_last = yolo_stage2_initialization_checkpoint(stage1_dir)
+    stage2_initialization = {
+        "status": "STAGE2_INITIALIZED_FROM_STAGE1_LAST",
+        "source_checkpoint": str(stage1_last.resolve()),
+        "source_checkpoint_sha256": sha256_file(stage1_last),
+    }
 
     stage2_last = stage2_dir / "weights" / "last.pt"
     if resume_enabled and stage2_last.exists() and completed_epochs(stage2_dir) < epochs_ft:
@@ -2019,7 +2145,8 @@ def train_yolo_detector(paths: PreparedPaths, out_dir: Path, cfg: dict) -> Tuple
         stage2_dir = Path(res2.save_dir)
     elif not resume_enabled or completed_epochs(stage2_dir) < epochs_ft:
         print(f"[{now()}] YOLOv8s Stage 2: full fine-tuning for {epochs_ft} epochs")
-        model = YOLO(str(stage1_best))
+        print(f"[{now()}] Stage 2 initialization source = Stage 1 last checkpoint: {stage1_last}")
+        model = YOLO(str(stage1_last))
         res2 = model.train(
             data=str(paths.trash_yaml), epochs=epochs_ft, imgsz=imgsz, batch=batch,
             project=str(project), name="yolov8s_stage2", exist_ok=True, seed=seed,
@@ -2031,6 +2158,7 @@ def train_yolo_detector(paths: PreparedPaths, out_dir: Path, cfg: dict) -> Tuple
             hsv_v=float(aug.get("brightness", 0.0)), hsv_s=float(aug.get("saturation", 0.0)), hsv_h=0.0,
         )
         stage2_dir = Path(res2.save_dir)
+    write_json_atomic(stage2_dir / "stage2_initialization.json", stage2_initialization)
     best = finalize_yolo_stage2_checkpoint(stage2_dir)
     yolo_model = YOLO(str(best))
 
@@ -2293,6 +2421,32 @@ def load_config(args) -> dict:
     return cfg
 
 
+def validate_river_provenance_if_requested(cfg: dict, repo_root: Path) -> bool:
+    """Require River provenance only for an explicitly requested River evaluation."""
+    run_cfg = cfg.get("run", {})
+    river_requested = bool(run_cfg.get("evaluate", True)) and bool(cfg.get("river_root"))
+    if not river_requested:
+        return False
+    provenance = cfg.get("provenance", {})
+    river_fingerprint_value = provenance.get("river_fingerprint_file")
+    if not river_fingerprint_value:
+        raise RuntimeError("Canonical River fingerprint path is required for River evaluation.")
+    river_fingerprint_path = Path(river_fingerprint_value)
+    if not river_fingerprint_path.is_absolute():
+        river_fingerprint_path = repo_root / river_fingerprint_path
+    if not river_fingerprint_path.is_file():
+        raise RuntimeError("Canonical River fingerprint file is missing.")
+    river_fingerprint = json.loads(river_fingerprint_path.read_text(encoding="utf-8"))
+    expected = {
+        "river_source_sha256": river_fingerprint.get("dataset_sha256"),
+        "river_evaluation_sha256": river_fingerprint.get("evaluation_dataset_sha256"),
+    }
+    for key, actual in expected.items():
+        if not provenance.get(key) or provenance[key] != actual:
+            raise RuntimeError(f"Configured provenance.{key} does not match the canonical River fingerprint.")
+    return True
+
+
 def run_single_seed(paths: PreparedPaths, out_dir: Path, cfg: dict, device: torch.device) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     run_cfg = cfg.get("run", {})
     yolo_model = frcnn_model = ssd_model = None
@@ -2332,6 +2486,10 @@ def run_single_seed(paths: PreparedPaths, out_dir: Path, cfg: dict, device: torc
             row = metrics_row("MobileNet SSD", "Trash-ICRA19 test", metrics, fps, ms)
             row["seed"] = seed
             overall_rows.append(row)
+
+    if not evaluate_enabled:
+        # Training-only runs must not create even empty Test/River/FPS artifacts.
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     overall = pd.DataFrame(overall_rows)
     overall.to_csv(out_dir / "results_overall_test.csv", index=False)
@@ -2479,22 +2637,7 @@ def main() -> None:
     for key in ("dataset_sha256", "split_manifest_sha256"):
         if not provenance.get(key) or provenance[key] != fingerprint.get(key):
             raise RuntimeError(f"Configured provenance.{key} does not match the canonical fingerprint.")
-    river_fingerprint_value = provenance.get("river_fingerprint_file")
-    if not river_fingerprint_value:
-        raise RuntimeError("Canonical River fingerprint path is required before training.")
-    river_fingerprint_path = Path(river_fingerprint_value)
-    if not river_fingerprint_path.is_absolute():
-        river_fingerprint_path = repo_root / river_fingerprint_path
-    if not river_fingerprint_path.is_file():
-        raise RuntimeError("Canonical River fingerprint file is missing.")
-    river_fingerprint = json.loads(river_fingerprint_path.read_text(encoding="utf-8"))
-    river_expected = {
-        "river_source_sha256": river_fingerprint.get("dataset_sha256"),
-        "river_evaluation_sha256": river_fingerprint.get("evaluation_dataset_sha256"),
-    }
-    for key, actual in river_expected.items():
-        if not provenance.get(key) or provenance[key] != actual:
-            raise RuntimeError(f"Configured provenance.{key} does not match the canonical River fingerprint.")
+    river_requested = validate_river_provenance_if_requested(cfg, repo_root)
     verifier = repo_root / "tools" / "verify_dataset.py"
     subprocess.run(
         [sys.executable, str(verifier), "--manifest", str(manifest_path),
@@ -2505,9 +2648,9 @@ def main() -> None:
     gate_errors = []
     if approval.get("training_authorized") is not True:
         gate_errors.append("training_authorized is false")
-    if approval.get("river_duplicate_policy") != "exclude_all_conflicting_groups":
+    if river_requested and approval.get("river_duplicate_policy") != "exclude_all_conflicting_groups":
         gate_errors.append("River duplicate policy is not exclude_all_conflicting_groups")
-    if approval.get("river_nms_protocol") != "framework_class_agnostic_once":
+    if river_requested and approval.get("river_nms_protocol") != "framework_class_agnostic_once":
         gate_errors.append("River NMS protocol is not framework_class_agnostic_once")
     if gate_errors and not args.check_sequences_only:
         raise RuntimeError("Training approval gate is closed: " + "; ".join(gate_errors))
@@ -2618,8 +2761,9 @@ def main() -> None:
         if not cross_df.empty:
             all_runs.append(cross_df)
     runs_df = pd.concat(all_runs, ignore_index=True) if all_runs else pd.DataFrame()
-    runs_df.to_csv(out_dir / "results_all_runs.csv", index=False)
-    summarize_runs(runs_df, out_dir)
+    if not runs_df.empty:
+        runs_df.to_csv(out_dir / "results_all_runs.csv", index=False)
+        summarize_runs(runs_df, out_dir)
 
     print("\nFinished. Main outputs:")
     for p in [
