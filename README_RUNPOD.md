@@ -29,7 +29,7 @@ Upload and unzip the package, and place canonical data under
 
 ```bash
 cd /workspace
-unzip marine_runpod_three_models_<commit>.zip
+unzip marine_runpod_three_models.zip
 cd marine_runpod_release
 export MARINE_REPO_ROOT=/workspace/marine_runpod_release
 export MARINE_PERSISTENCE_CONFIRMED=YES
