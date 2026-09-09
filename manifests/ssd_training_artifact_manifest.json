@@ -1,0 +1,80 @@
+{
+  "schema_version": 2,
+  "status": "VERIFIED_COMPLETE",
+  "execution_mode": "continuous_official_training",
+  "exact_resume_comparison": "NOT_APPLICABLE",
+  "model": "ssd",
+  "source_commit": "aed8bedd74010a0c29b70e6bf65ea8fdecc4fb44",
+  "config": {
+    "path": "/workspace/persistent/marine_control/configs/canonical_aed8bedd_20260908T234342Z/ssd.yaml",
+    "size_bytes": 1766,
+    "sha256": "99e59edac6d72ff28ddba47f792cf54b52384e90ad1fd9b1d4687196984b4f1b"
+  },
+  "provenance": {
+    "canonical_manifest": "manifests/trash_icra19/canonical_split_manifest.csv",
+    "fingerprint_file": "manifests/trash_icra19/dataset_fingerprint.json",
+    "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
+    "split_manifest_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
+    "river_fingerprint_file": "manifests/river/river_fingerprint.json",
+    "river_source_sha256": "5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1",
+    "river_evaluation_sha256": "5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1"
+  },
+  "evidence": {
+    "used_config.yaml": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/used_config.yaml",
+      "size_bytes": 1766,
+      "sha256": "99e59edac6d72ff28ddba47f792cf54b52384e90ad1fd9b1d4687196984b4f1b"
+    },
+    "system_details.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/system_details.json",
+      "size_bytes": 316,
+      "sha256": "dc316d66f6e28874d9bdf8e49ff9f067505bb41dbbc146175efc2967261df009"
+    },
+    "python_environment.txt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/python_environment.txt",
+      "size_bytes": 1494,
+      "sha256": "ea2c7549f0a715966d8c1377fee5270528d85e4c4875380ee1d355cf4c0c01b3"
+    },
+    "experiment_protocol.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/experiment_protocol.json",
+      "size_bytes": 825,
+      "sha256": "68caad8f398345c4590ed3f1f5e67d8652d2de246a0483f91628224453d40dbe"
+    },
+    "environment.txt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/environment.txt",
+      "size_bytes": 3411,
+      "sha256": "cefdb6005843e7395fb4998f6dcc2ac1d8c16c2fb8016c5e759f84be165cf471"
+    },
+    "canonical_source_membership.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/canonical_source_membership.json",
+      "size_bytes": 471,
+      "sha256": "b290af4e15d8f88c5ec6b5f6793e55d6825ead0f9d3865fcf7eaaf6b2841a907"
+    },
+    "canonical_materialization_audit.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/canonical_materialization_audit.json",
+      "size_bytes": 205,
+      "sha256": "21e8a2fd7fd8eef9ed0e4cd339876a7b374d2e6f50815d70d11f652e4a8cff1a"
+    },
+    "execution": {
+      "path": "/workspace/persistent/marine_control/executions/canonical_aed8bedd_20260908T234342Z_ssd.json",
+      "size_bytes": 667,
+      "sha256": "7bf9de73c54158fca5d16e1448f070b346484daecc157b7ceffc5634559897c0"
+    }
+  },
+  "checkpoints": {
+    "best.pt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/runs/seed_42/torchvision/ssd/best.pt",
+      "size_bytes": 9245703,
+      "sha256": "eaf4ea46b3483ec861d0695b66f95f8e445907e626a7d9b7a328e472f186338e"
+    },
+    "last.pt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/ssd/runs/seed_42/torchvision/ssd/last.pt",
+      "size_bytes": 18302829,
+      "sha256": "912d6f15be073208784b054913ba1c65fcadfcd767254bd6c02e1ce2a23971c8"
+    }
+  },
+  "details": {
+    "history_rows": 110,
+    "best_epoch": 36
+  }
+}

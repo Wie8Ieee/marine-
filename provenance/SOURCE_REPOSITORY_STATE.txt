@@ -1,0 +1,6 @@
+Canonical source provenance
+Training checkpoint identity commit: aed8bedd74010a0c29b70e6bf65ea8fdecc4fb44
+Post-training verifier release: 79af9e9bb3334dcf496b47a44dcc380da0011547
+River numerical tolerance fix: ff1dbf7294ae282f894ffafea64e73ca5615e5cd
+Final evaluation experiment-module snapshot is byte-identical to the SHA-256 recorded in environment/evaluation_environment.json.
+The operator's later local smoke branch and its uncommitted files were not used to build this release.

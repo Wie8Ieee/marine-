@@ -1,0 +1,28 @@
+{
+  "commit": "aed8bedd74010a0c29b70e6bf65ea8fdecc4fb44",
+  "cuda": "12.8",
+  "device": "cuda:0",
+  "evaluation_code_provenance": {
+    "experiment_module_sha256": "fe3c009300d6abc8c4c028cb983b70843ee008e6898e66cb4af7651bb7834b5f",
+    "river_boundary_fix_commit": "ff1dbf7294ae282f894ffafea64e73ca5615e5cd",
+    "river_only_runner_sha256": "af5d7d555165fe9fd3509cbfa0180920ee21b0b701922b76818a44c6e8155622"
+  },
+  "fps_protocol": {
+    "batch_size": 1,
+    "included": [
+      "host_to_device",
+      "forward",
+      "postprocessing_and_nms"
+    ],
+    "preprocessing": "excluded (predecoded/resized)",
+    "timed_frames": 120,
+    "warmup": 20
+  },
+  "fps_reused_from_existing_test_results": true,
+  "gpu": "NVIDIA A40",
+  "python": "3.12.3",
+  "pytorch": "2.10.0+cu128",
+  "timestamp_utc": "2026-09-09T20:25:34.157243+00:00",
+  "torchvision": "0.25.0+cu128",
+  "ultralytics": "8.4.143"
+}

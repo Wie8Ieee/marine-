@@ -1,0 +1,12 @@
+{
+  "all_model_statuses": "VERIFIED_COMPLETE",
+  "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
+  "river_evaluation_images": 2185,
+  "river_evaluation_sha256": "5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1",
+  "river_source_sha256": "5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1",
+  "sequence_overlap": 0,
+  "split_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
+  "status": "PASS",
+  "test_images": 1153,
+  "timestamp_utc": "2026-09-09T19:32:07.256938+00:00"
+}

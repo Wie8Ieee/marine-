@@ -1,0 +1,88 @@
+{
+  "artifacts": {
+    "best_validation.json": {
+      "sha256": "6bc3de95975f3aa97e51466833e22744fbcfe6a5cfe40fa8524170b912c309e6",
+      "size_bytes": 197
+    },
+    "canonical_materialization_audit.json": {
+      "sha256": "21e8a2fd7fd8eef9ed0e4cd339876a7b374d2e6f50815d70d11f652e4a8cff1a",
+      "size_bytes": 205
+    },
+    "canonical_source_membership.json": {
+      "sha256": "b290af4e15d8f88c5ec6b5f6793e55d6825ead0f9d3865fcf7eaaf6b2841a907",
+      "size_bytes": 471
+    },
+    "checkpoint_load_gate.json": {
+      "sha256": "de27f6da3ce22d1026f3f76cc8b7d875d57fb6912497b3bf6998231abf53b2fa",
+      "size_bytes": 132
+    },
+    "dataset_summary.csv": {
+      "sha256": "a3bc7857ff4f601fffd4c9359e822159169ab85a4079109b210d72a121286a41",
+      "size_bytes": 227
+    },
+    "environment.json": {
+      "sha256": "895a23183bc97ad611a24d858a2982e6a6b6e09e3dfe013988d03de45fcc0dc4",
+      "size_bytes": 892
+    },
+    "evaluation_config.json": {
+      "sha256": "3331428f2fba750487caf0cbf734532a807c71a1c2d587d87e484e44b2d6f869",
+      "size_bytes": 2246
+    },
+    "pre_evaluation_gate.json": {
+      "sha256": "6530e206136e25d92d2020bfd104bed9a02c7b72a6d68f825b87b8b662886510",
+      "size_bytes": 570
+    },
+    "river_results.csv": {
+      "sha256": "c5ed3ca8e701072b9bf60481a933f7a6f4ace3adf4d61dc6f11105675031c127",
+      "size_bytes": 409
+    },
+    "river_results.json": {
+      "sha256": "a242e6f208ccddf00e25d2b3ca158edc94c049002a12f15f43dc7cecc547d053",
+      "size_bytes": 723
+    },
+    "sequence_split_audit.csv": {
+      "sha256": "01fe91284dc950889262480c8fdd77c1d3439121797310c17ecbdfc068c19082",
+      "size_bytes": 2913
+    },
+    "test_results.csv": {
+      "sha256": "c411ca7f7c703d631aeadec1eabce3d8cf8adb43561b49c504392d560a9bd068",
+      "size_bytes": 524
+    },
+    "test_results.json": {
+      "sha256": "e85744fd1756eb9a0e6b40762f4a5e1cb26c59230f3973fa23b2940392bfb5fc",
+      "size_bytes": 1336
+    },
+    "training_artifact_immutability.json": {
+      "sha256": "6e15143eb5f10a2b9d1049a08e98a1970bc61b96bc3ff79b1f919d3c50895c81",
+      "size_bytes": 34547
+    }
+  },
+  "checkpoints": "best.pt only",
+  "completed_utc": "2026-09-09T20:25:37.793302+00:00",
+  "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
+  "evaluation_code_provenance": {
+    "experiment_module_sha256": "fe3c009300d6abc8c4c028cb983b70843ee008e6898e66cb4af7651bb7834b5f",
+    "river_boundary_fix_commit": "ff1dbf7294ae282f894ffafea64e73ca5615e5cd",
+    "river_only_runner_sha256": "af5d7d555165fe9fd3509cbfa0180920ee21b0b701922b76818a44c6e8155622"
+  },
+  "evaluation_only": true,
+  "fps_rerun": false,
+  "models": [
+    "yolo",
+    "frcnn",
+    "ssd"
+  ],
+  "river_evaluation_sha256": "5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1",
+  "river_retry_after_numeric_boundary_fix": true,
+  "river_source_sha256": "5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1",
+  "schema_version": 1,
+  "split_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
+  "status": "VERIFIED_COMPLETE",
+  "test_rerun": false,
+  "thresholds": {
+    "confidence": 0.25,
+    "iou_match": 0.5,
+    "river_class_agnostic_nms": 0.5
+  },
+  "training_performed": false
+}

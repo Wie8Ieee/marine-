@@ -1,0 +1,4 @@
+Training checkpoint identity: aed8bedd74010a0c29b70e6bf65ea8fdecc4fb44
+Training/verifier release requested for publication: 79af9e9bb3334dcf496b47a44dcc380da0011547
+Post-training verifier path fix: 79af9e9bb3334dcf496b47a44dcc380da0011547
+River numerical tolerance fix: ff1dbf7294ae282f894ffafea64e73ca5615e5cd

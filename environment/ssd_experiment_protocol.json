@@ -1,0 +1,31 @@
+{
+  "confidence_threshold": 0.25,
+  "iou_match_threshold": 0.5,
+  "class_agnostic_nms_iou": 0.5,
+  "augmentation": {
+    "enabled": true,
+    "horizontal_flip": 0.5,
+    "brightness": 0.0,
+    "saturation": 0.0
+  },
+  "latency": {
+    "batch_size": 1,
+    "warmup_frames": 20,
+    "max_timed_frames": 120,
+    "input": "predecoded_and_resized_cpu_tensor",
+    "includes": [
+      "host_to_device_transfer",
+      "model_forward",
+      "postprocessing_and_nms"
+    ]
+  },
+  "object_size": {
+    "canonical_canvas": "640x640",
+    "standard": "COCO area bins",
+    "small": "area < 32^2 pixels",
+    "medium": "32^2 <= area < 96^2 pixels",
+    "large": "area >= 96^2 pixels"
+  },
+  "checkpoint_selection": "highest validation mAP@0.5:0.95",
+  "model_size": "state_dict tensor bytes only; checkpoint size reported separately"
+}

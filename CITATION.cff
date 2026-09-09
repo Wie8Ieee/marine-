@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the associated paper."
+title: "Deep Learning-Based Marine Debris Detection for Smart Water Monitoring: A Comparative Evaluation with Cross-Domain Testing on River Floating Trash Images"
+type: software
+authors:
+  - family-names: "[AUTHOR FAMILY NAME]"
+    given-names: "[AUTHOR GIVEN NAME]"
+    affiliation: "[AUTHOR AFFILIATION]"
+repository-code: "https://github.com/Wie8Ieee/marine-"
+date-released: "2026-09-10"
+version: "canonical-aed8bedd"

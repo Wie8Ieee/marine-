@@ -1,0 +1,4 @@
+model,fps,ms_per_frame,input_size,protocol
+YOLOv8s,19.033767447215677,52.538206257546946,640,architecture-specific inference throughput
+Faster R-CNN ResNet50-FPN,53.98555542681696,18.52347340124349,640,architecture-specific inference throughput
+SSDLite320 MobileNetV3-Large,68.61394888514981,14.574295988616843,320,architecture-specific inference throughput

@@ -1,0 +1,8 @@
+Experiment: canonical_aed8bedd_20260908T234342Z
+YOLOv8s: VERIFIED_COMPLETE
+Faster R-CNN: VERIFIED_COMPLETE
+SSDLite: VERIFIED_COMPLETE
+Test: PASS
+River: PASS
+FPS: PASS
+Final artifact verification: PASS

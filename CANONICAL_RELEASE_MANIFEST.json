@@ -1,0 +1,119 @@
+{
+  "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
+  "date": "2026-09-10",
+  "experiment_id": "canonical_aed8bedd_20260908T234342Z",
+  "final_archive_sha256": "343430df1851f6b923fe847a092adf7e7a8203431fb1fee1efebb44780af58e5",
+  "models": [
+    {
+      "best_checkpoint_sha256": "419181839575c220d457fd3283b9f560466a8ecd7c42c4283cb3ebff73e756e4",
+      "best_epoch": 31,
+      "id": "yolo",
+      "name": "YOLOv8s",
+      "river": {
+        "f1": 0.21106382978723404,
+        "fn": 2582,
+        "fp": 2053,
+        "map_50": 0.10768560320138931,
+        "map_50_95": 0.049975208938121796,
+        "precision": 0.23194912083800973,
+        "recall": 0.19362898188632105,
+        "tp": 620
+      },
+      "test": {
+        "f1": 0.3920108327691266,
+        "fn": 911,
+        "fp": 885,
+        "fps": 19.033767447215677,
+        "map_50": 0.2671883702278137,
+        "map_50_95": 0.12588778138160706,
+        "ms_per_frame": 52.538206257546946,
+        "per_class_ap_50_95": {
+          "bio": 0.08615263551473618,
+          "plastic": 0.2304813265800476,
+          "rov": 0.06102937459945679
+        },
+        "precision": 0.39549180327868855,
+        "recall": 0.38859060402684564,
+        "tp": 579
+      },
+      "validation_map_50_95": 0.25939
+    },
+    {
+      "best_checkpoint_sha256": "aa1dd781efde1279e2cc12567e54640c34d238f9bf2288255c20fa3785db512d",
+      "best_epoch": 27,
+      "id": "frcnn",
+      "name": "Faster R-CNN ResNet50-FPN",
+      "river": {
+        "f1": 0.3198504084243677,
+        "fn": 1577,
+        "fp": 5334,
+        "map_50": 0.28391093015670776,
+        "map_50_95": 0.13058540225028992,
+        "precision": 0.23351056186233654,
+        "recall": 0.5074953154278576,
+        "tp": 1625
+      },
+      "test": {
+        "f1": 0.565597667638484,
+        "fn": 326,
+        "fp": 1462,
+        "fps": 53.98555542681696,
+        "map_50": 0.6341511011123657,
+        "map_50_95": 0.3306160867214203,
+        "ms_per_frame": 18.52347340124349,
+        "per_class_ap_50_95": {
+          "bio": 0.3100999891757965,
+          "plastic": 0.4146035313606262,
+          "rov": 0.26714470982551575
+        },
+        "precision": 0.44325971058644326,
+        "recall": 0.7812080536912752,
+        "tp": 1164
+      },
+      "validation_map_50_95": 0.482640266418457
+    },
+    {
+      "best_checkpoint_sha256": "eaf4ea46b3483ec861d0695b66f95f8e445907e626a7d9b7a328e472f186338e",
+      "best_epoch": 36,
+      "id": "ssd",
+      "name": "SSDLite320 MobileNetV3-Large",
+      "river": {
+        "f1": 0.20597810002959455,
+        "fn": 2506,
+        "fp": 2860,
+        "map_50": 0.11586793512105942,
+        "map_50_95": 0.04825754836201668,
+        "precision": 0.19572553430821146,
+        "recall": 0.21736414740787008,
+        "tp": 696
+      },
+      "test": {
+        "f1": 0.47348594610257894,
+        "fn": 673,
+        "fp": 1144,
+        "fps": 68.61394888514981,
+        "map_50": 0.41412803530693054,
+        "map_50_95": 0.2257838398218155,
+        "ms_per_frame": 14.574295988616843,
+        "per_class_ap_50_95": {
+          "bio": 0.2872309684753418,
+          "plastic": 0.26147735118865967,
+          "rov": 0.12864316999912262
+        },
+        "precision": 0.4166241713411525,
+        "recall": 0.5483221476510067,
+        "tp": 817
+      },
+      "validation_map_50_95": 0.375232994556427
+    }
+  ],
+  "schema_version": 1,
+  "seed": 42,
+  "source_commits": {
+    "post_training_verifier_release": "79af9e9bb3334dcf496b47a44dcc380da0011547",
+    "river_numerical_tolerance_fix": "ff1dbf7294ae282f894ffafea64e73ca5615e5cd",
+    "training_checkpoint_identity": "aed8bedd74010a0c29b70e6bf65ea8fdecc4fb44"
+  },
+  "split_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
+  "status": "VERIFIED_COMPLETE"
+}

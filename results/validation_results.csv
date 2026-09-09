@@ -1,0 +1,4 @@
+model,best_epoch,validation_map_50_95
+YOLOv8s,31,0.25939
+Faster R-CNN ResNet50-FPN,27,0.482640266418457
+SSDLite320 MobileNetV3-Large,36,0.375232994556427

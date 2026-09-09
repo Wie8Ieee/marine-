@@ -1,0 +1,102 @@
+{
+  "schema_version": 2,
+  "status": "VERIFIED_COMPLETE",
+  "execution_mode": "continuous_official_training",
+  "exact_resume_comparison": "NOT_APPLICABLE",
+  "model": "yolo",
+  "source_commit": "aed8bedd74010a0c29b70e6bf65ea8fdecc4fb44",
+  "config": {
+    "path": "/workspace/persistent/marine_control/configs/canonical_aed8bedd_20260908T234342Z/yolo.yaml",
+    "size_bytes": 1767,
+    "sha256": "7149d05ff3afc6fbd9a5b6fa400d65bdad88e0f4d3a291ee3525da976d360fec"
+  },
+  "provenance": {
+    "canonical_manifest": "manifests/trash_icra19/canonical_split_manifest.csv",
+    "fingerprint_file": "manifests/trash_icra19/dataset_fingerprint.json",
+    "dataset_sha256": "5e0f560955eaf8ae4c517aa7eb80215f273dc976e9385f71e87d22f6ffa9e4cf",
+    "split_manifest_sha256": "a0d4ad351b536dbfde96926c7500b09c62d2d24bfacc01831c7cf2ed65fa3d94",
+    "river_fingerprint_file": "manifests/river/river_fingerprint.json",
+    "river_source_sha256": "5a8f7762c09d88e9fb823a03cf880e20a707b7c1f0e8253c567a98c086563ce1",
+    "river_evaluation_sha256": "5f6f1a7ca2f8edef49c1b8049b405d9065a4cb55c7118e690e60a4d6c17a8af1"
+  },
+  "evidence": {
+    "used_config.yaml": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/used_config.yaml",
+      "size_bytes": 1767,
+      "sha256": "7149d05ff3afc6fbd9a5b6fa400d65bdad88e0f4d3a291ee3525da976d360fec"
+    },
+    "system_details.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/system_details.json",
+      "size_bytes": 316,
+      "sha256": "dc316d66f6e28874d9bdf8e49ff9f067505bb41dbbc146175efc2967261df009"
+    },
+    "python_environment.txt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/python_environment.txt",
+      "size_bytes": 1494,
+      "sha256": "ea2c7549f0a715966d8c1377fee5270528d85e4c4875380ee1d355cf4c0c01b3"
+    },
+    "experiment_protocol.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/experiment_protocol.json",
+      "size_bytes": 825,
+      "sha256": "68caad8f398345c4590ed3f1f5e67d8652d2de246a0483f91628224453d40dbe"
+    },
+    "environment.txt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/environment.txt",
+      "size_bytes": 3411,
+      "sha256": "cefdb6005843e7395fb4998f6dcc2ac1d8c16c2fb8016c5e759f84be165cf471"
+    },
+    "canonical_source_membership.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/canonical_source_membership.json",
+      "size_bytes": 471,
+      "sha256": "b290af4e15d8f88c5ec6b5f6793e55d6825ead0f9d3865fcf7eaaf6b2841a907"
+    },
+    "canonical_materialization_audit.json": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/canonical_materialization_audit.json",
+      "size_bytes": 205,
+      "sha256": "21e8a2fd7fd8eef9ed0e4cd339876a7b374d2e6f50815d70d11f652e4a8cff1a"
+    },
+    "execution": {
+      "path": "/workspace/persistent/marine_control/executions/canonical_aed8bedd_20260908T234342Z_yolo.json",
+      "size_bytes": 944,
+      "sha256": "f84341d93d3138dac7f920b88b1e1c3cefef60f861f42ad35685b808c687b278"
+    }
+  },
+  "checkpoints": {
+    "best.pt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/runs/seed_42/yolo/yolov8s_stage2/weights/best.pt",
+      "size_bytes": 89505063,
+      "sha256": "419181839575c220d457fd3283b9f560466a8ecd7c42c4283cb3ebff73e756e4"
+    },
+    "last.pt": {
+      "path": "/workspace/persistent/marine_runs/canonical_aed8bedd_20260908T234342Z/yolo/runs/seed_42/yolo/yolov8s_stage2/weights/last.pt",
+      "size_bytes": 22513642,
+      "sha256": "2928c843107e355e77fc10e5e2538e0e0c725b25d5c81ade304325100ba43ee2"
+    }
+  },
+  "details": {
+    "stage1_rows": 10,
+    "stage2_rows": 100,
+    "selection": {
+      "schema_version": 1,
+      "status": "SELECTED_BY_VALIDATION_MAP50_95",
+      "stage": "stage2",
+      "metric": "validation mAP@0.5:0.95",
+      "results_column": "metrics/mAP50-95(B)",
+      "selected_epoch": 31,
+      "selected_epoch_index": 30,
+      "selected_metric": 0.25939,
+      "source_checkpoint": "epoch30.pt",
+      "source_checkpoint_sha256": "419181839575c220d457fd3283b9f560466a8ecd7c42c4283cb3ebff73e756e4",
+      "best_checkpoint": "weights/best.pt",
+      "best_checkpoint_sha256": "419181839575c220d457fd3283b9f560466a8ecd7c42c4283cb3ebff73e756e4",
+      "last_checkpoint": "weights/last.pt",
+      "last_checkpoint_sha256": "2928c843107e355e77fc10e5e2538e0e0c725b25d5c81ade304325100ba43ee2"
+    },
+    "last_epoch_contract": "ULTRALYTICS_STRIPPED_FINAL"
+  },
+  "verification_recovery": {
+    "verifier_commit": "79af9e9bb3334dcf496b47a44dcc380da0011547",
+    "verified_utc": "2026-09-09T09:48:40.402134+00:00",
+    "audit_record": "/workspace/persistent/marine_control/audits/yolo_existing_verification_recovery_79af9e9b.json"
+  }
+}
