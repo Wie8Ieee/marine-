@@ -12,7 +12,7 @@ from tools.export_training_artifacts import export_model
 from tools.runpod_model_runner import reserve,stream_process
 from tools.runpod_orchestrator import run_group
 from tools.runpod_release import MODEL_CONFIGS,load_and_validate_config,training_config_sha256
-from tools.verify_training_artifacts import verify_torchvision,verify_yolo
+from tools.verify_training_artifacts import load_runtime_config,verify_torchvision,verify_yolo
 
 COMMIT=os.popen(f'git -C "{ROOT}" rev-parse HEAD').read().strip()
 
@@ -33,6 +33,27 @@ class ConfigurationTests(unittest.TestCase):
             cfg=yaml.safe_load((ROOT/MODEL_CONFIGS['yolo']).read_text()); cfg['seed']=7
             path=Path(tmp)/'bad.yaml'; path.write_text(yaml.safe_dump(cfg))
             with self.assertRaisesRegex(RuntimeError,'seed'): load_and_validate_config(path,'yolo')
+    def test_verifier_accepts_direct_orchestrated_model_run_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg=yaml.safe_load((ROOT/MODEL_CONFIGS['yolo']).read_text())
+            cfg['out_dir']='/workspace/persistent/marine_runs/group-001/yolo'
+            path=Path(tmp)/'runtime.yaml'; path.write_text(yaml.safe_dump(cfg))
+            loaded=load_runtime_config(path,'yolo',Path(cfg['out_dir']),False)
+            self.assertEqual(loaded['out_dir'],cfg['out_dir'])
+    def test_verifier_rejects_out_dir_different_from_runtime_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg=yaml.safe_load((ROOT/MODEL_CONFIGS['yolo']).read_text())
+            cfg['out_dir']='/workspace/persistent/marine_runs/group-001/yolo'
+            path=Path(tmp)/'runtime.yaml'; path.write_text(yaml.safe_dump(cfg))
+            with self.assertRaisesRegex(RuntimeError,'Verifier out_dir mismatch'):
+                load_runtime_config(path,'yolo',Path(cfg['out_dir'])/'yolo',False)
+    def test_verifier_rejects_runtime_output_outside_persistent_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg=yaml.safe_load((ROOT/MODEL_CONFIGS['yolo']).read_text())
+            cfg['out_dir']='/tmp/unsafe/yolo'
+            path=Path(tmp)/'runtime.yaml'; path.write_text(yaml.safe_dump(cfg))
+            with self.assertRaisesRegex(RuntimeError,'runtime out_dir'):
+                load_runtime_config(path,'yolo',Path(cfg['out_dir']),False)
 
 class OutputAndOrchestrationTests(unittest.TestCase):
     def test_atomic_duplicate_reservation(self):

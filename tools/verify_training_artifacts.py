@@ -44,6 +44,21 @@ def ensure_no_evaluation(out_dir: Path) -> None:
         raise RuntimeError(f"Training-only run contains evaluation output: {found}")
 
 
+def load_runtime_config(config_path: Path, model: str, out_dir: Path, preflight: bool) -> dict:
+    """Validate an orchestrated config and bind it to the exact run directory supplied."""
+    cfg = load_and_validate_config(
+        config_path, model, allow_preflight=preflight, allow_output_override=True,
+    )
+    configured_output = Path(str(cfg.get("out_dir", ""))).resolve()
+    supplied_output = out_dir.resolve()
+    if configured_output != supplied_output:
+        raise RuntimeError(
+            "Verifier out_dir mismatch: "
+            f"config resolves to {configured_output}, argument resolves to {supplied_output}"
+        )
+    return cfg
+
+
 def verify_yolo_last_epoch(payload: dict, history: pd.DataFrame, expected_rows: int) -> str:
     """Accept either an explicit final epoch or Ultralytics' stripped-final encoding."""
     epoch = int(payload.get("epoch", -2))
@@ -179,7 +194,7 @@ def verify_torchvision(model: str, out_dir: Path, cfg: dict, expected_commit: st
 
 
 def verify(model: str, out_dir: Path, config_path: Path, expected_commit: str, preflight: bool = False, execution_record: Path | None = None) -> dict:
-    cfg = load_and_validate_config(config_path, model, allow_preflight=preflight)
+    cfg = load_runtime_config(config_path, model, out_dir, preflight)
     expected_rows = 2 if preflight else 110
     evidence = {name: required(out_dir / name) for name in (
         "used_config.yaml", "system_details.json", "python_environment.txt", "experiment_protocol.json",
